@@ -2,8 +2,10 @@
 
 set -e  # Exit on any error
 
+# Record script start time
 START_TIME=$(date +%s)
 
+# Function to log messages with elapsed time
 log() {
   local CURRENT_TIME=$(date +%s)
   local ELAPSED=$((CURRENT_TIME - START_TIME))
@@ -12,8 +14,9 @@ log() {
   printf "[%02d:%02d] %s\n" "$MINUTES" "$SECONDS" "$1"
 }
 
+# Scale a Kubernetes deployment incrementally
 scale_deployment() {
-  local INSTANCE=$1 DEPLOYMENT=$2 TARGET_REPLICAS=$3 SCALE_DELAY=$4 SCALE_INCREMENT=$5
+  local DEPLOYMENT=$1 TARGET_REPLICAS=$2 SCALE_DELAY=$3 SCALE_INCREMENT=$4
   log "Starting rollout for $DEPLOYMENT (Target: $TARGET_REPLICAS, Increment: $SCALE_INCREMENT, Pause: $SCALE_DELAY sec)"
 
   local CURRENT_REPLICAS
@@ -41,6 +44,7 @@ scale_deployment() {
   log "✅ Scaling complete for $DEPLOYMENT."
 }
 
+# Wait for a deployment to be fully ready
 wait_for_deployment_ready() {
   local DEPLOYMENT=$1
   log "Waiting for $DEPLOYMENT to be fully rolled out..."
@@ -51,8 +55,9 @@ wait_for_deployment_ready() {
   log "✅ Deployment $DEPLOYMENT is fully rolled out."
 }
 
+# Poll pods for HTTP readiness
 poll_pods_http() {
-  local INSTANCE=$1 DEPLOYMENT=$2 SELECTOR=$3 TARGET_REPLICAS=$4 WAIT_BEFORE_POLL=$5 HTTP_ENDPOINT=$6 HTTP_PORT=$7 VALIDATION_STRING=$8 RETRY_DELAY=$9 MAX_RETRIES=${10}
+  local DEPLOYMENT=$1 SELECTOR=$2 TARGET_REPLICAS=$3 WAIT_BEFORE_POLL=$4 HTTP_ENDPOINT=$5 HTTP_PORT=$6 VALIDATION_STRING=$7 RETRY_DELAY=$8 MAX_RETRIES=$9
 
   log "⌛ Waiting $WAIT_BEFORE_POLL sec before polling pods for $DEPLOYMENT..."
   sleep "$WAIT_BEFORE_POLL"
@@ -62,7 +67,7 @@ poll_pods_http() {
   declare -A POD_IP_MAP
   while IFS=' ' read -r POD_NAME POD_IP; do
     [[ -n "$POD_NAME" && -n "$POD_IP" ]] && POD_IP_MAP["$POD_NAME"]="$POD_IP"
-  done < <(kubectl get pods -l "app.kubernetes.io/instance=${INSTANCE},app.kubernetes.io/name=${SELECTOR}" \
+  done < <(kubectl get pods -l "app.kubernetes.io/name=${SELECTOR}" \
     --field-selector=status.phase=Running -o=jsonpath="{range .items[*]}{.metadata.name} {.status.podIP}{'\n'}{end}" 2>/dev/null)
 
   if [[ ${#POD_IP_MAP[@]} -eq 0 ]]; then
@@ -100,11 +105,11 @@ poll_pods_http() {
 }
 
 ### **🛠 Deployment Configuration**
-APP_INSTANCE="app-instance"
 DEPLOYMENTS=(
-  "1 deploy1 deploy1 10 30 2 15 /api/v1/readiness 8080 '{\"ClusterSize\":4}' 10 5"
-  "1 deploy2 deploy2 5 20 3 20 /api/v1/readiness 9090 '{\"ClusterSize\":4}' 15 6"
-  "2 deploy3 deploy3 15 40 2 30 /api/v1/readiness 8000 '{\"ClusterSize\":4}' 20 7"
+  # WAVE  DEPLOYMENT  SELECTOR  TARGET_REPLICAS  SCALE_DELAY  SCALE_INCREMENT  WAIT_BEFORE_POLL  HTTP_ENDPOINT        HTTP_PORT  VALIDATION_STRING       RETRY_DELAY  MAX_RETRIES
+  "1      deploy1     deploy1   10              30           2                15                /api/v1/readiness    8080       '{\"ClusterSize\":4}'   10          5"
+  "1      deploy2     deploy2   5               20           3                20                /api/v1/readiness    9090       '{\"ClusterSize\":4}'   15          6"
+  "2      deploy3     deploy3   15              40           2                30                /api/v1/readiness    8000       '{\"ClusterSize\":4}'   20          7"
 )
 
 ### **🚀 Execute Deployment in Waves**
@@ -115,7 +120,7 @@ for WAVE in $(awk '{print $1}' <<< "${DEPLOYMENTS[@]}" | sort -u); do
 
   # First, scale all deployments in the wave
   for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
-    scale_deployment $(awk '{print $2, $3, $4, $5, $6}' <<< "$APP_DATA")
+    scale_deployment $(awk '{print $2, $4, $5, $6}' <<< "$APP_DATA")
   done
 
   # Wait for all deployments in the wave to be ready
