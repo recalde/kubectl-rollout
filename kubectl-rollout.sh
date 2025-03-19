@@ -57,16 +57,25 @@ poll_pods_http() {
 
 # Define deployments (format: "NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE")
 DEPLOYMENTS=(
-    "app1 10 /health 2 30s"
+    "app1 10 /api/v1/readiness 2 30s"
     "app2 5 /ready 3 20s"
     "app3 15 /status 2 40s"
 )
 
 # **Step 1: Scale Deployments**
-for APP_DATA in "${DEPLOYMENTS[@]}"; do scale_deployment $APP_DATA; done
+for APP_DATA in "${DEPLOYMENTS[@]}"; do
+    read -r DEPLOYMENT EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
+    scale_deployment "$DEPLOYMENT" "$EXPECTED_SIZE" "$INCREMENT" "$PAUSE"
+done
 
 # **Step 2: Wait for Deployments to be Ready**
-for APP_DATA in "${DEPLOYMENTS[@]}"; do wait_for_deployment_ready $(echo $APP_DATA | cut -d' ' -f1); done
+for APP_DATA in "${DEPLOYMENTS[@]}"; do
+    read -r DEPLOYMENT EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
+    wait_for_deployment_ready "$DEPLOYMENT"
+done
 
 # **Step 3: Poll Pods for Readiness**
-for APP_DATA in "${DEPLOYMENTS[@]}"; do poll_pods_http $APP_DATA; done
+for APP_DATA in "${DEPLOYMENTS[@]}"; do
+    read -r DEPLOYMENT EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
+    poll_pods_http "$DEPLOYMENT" "$ENDPOINT" "$EXPECTED_SIZE"
+done
