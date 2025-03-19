@@ -41,8 +41,8 @@ wait_for_deployment_ready() {
 }
 
 poll_pods_http() {
-  local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 ENDPOINT=$4 PORT=$5 EXPECTED_SIZE=$6 RETRY_INTERVAL=5 MAX_RETRIES=5
-  log "Polling pods for $DEPLOYMENT_NAME (Expected size: $EXPECTED_SIZE) on port $PORT..."
+  local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 ENDPOINT=$4 PORT=$5 VALIDATION_STRING=$6 RETRY_INTERVAL=5 MAX_RETRIES=5
+  log "Polling pods for $DEPLOYMENT_NAME (Validation: '$VALIDATION_STRING') on port $PORT..."
 
   # Fetch all pod names and IPs in a single kubectl call and store them in an associative array
   declare -A POD_IP_MAP
@@ -63,7 +63,7 @@ poll_pods_http() {
       local URL="http://${POD_IP}:${PORT}${ENDPOINT}"
       log "Checking $URL for pod $POD_NAME..."
       RESPONSE=$(curl --max-time 10 -s "$URL" || echo "ERROR")
-      if [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ "cluster-size: $EXPECTED_SIZE" ]]; then
+      if [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ "$VALIDATION_STRING" ]]; then
         NEXT_ROUND+=("$POD_NAME")
       else
         log "Pod $POD_NAME ($POD_IP) is ready!"
@@ -82,27 +82,27 @@ poll_pods_http() {
   log "WARNING: Some pods did not become ready: ${NEXT_ROUND[*]}"
 }
 
-# Define deployments (format: "DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT PORT INCREMENT PAUSE")
+# Define deployments (format: "DEPLOYMENT INSTANCE NAME ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING")
 DEPLOYMENTS=(
-  "app1 app1-instance app1-name 10 /api/v1/readiness 8080 2 30s"
-  "app2 app2-instance app2-name 5 /ready 9090 3 20s"
-  "app3 app3-instance app3-name 15 /status 8000 2 40s"
+  "deploy1 app-instance deploy1 /api/v1/readiness 8080 2 30s 'cluster-size: 10'"
+  "deploy2 app-instance deploy2 /ready 9090 3 20s 'ready: true'"
+  "deploy3 app-instance deploy3 /status 8000 2 40s 'service-ok: yes'"
 )
 
 # **Step 1: Scale Deployments**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-  read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT PORT INCREMENT PAUSE <<< "$APP_DATA"
-  scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$EXPECTED_SIZE" "$INCREMENT" "$PAUSE"
+  read -r DEPLOYMENT INSTANCE NAME ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
+  scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$PORT" "$INCREMENT" "$PAUSE"
 done
 
 # **Step 2: Wait for Deployments to be Ready**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-  read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT PORT INCREMENT PAUSE <<< "$APP_DATA"
+  read -r DEPLOYMENT INSTANCE NAME ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
   wait_for_deployment_ready "$DEPLOYMENT"
 done
 
 # **Step 3: Poll Pods for Readiness**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-  read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT PORT INCREMENT PAUSE <<< "$APP_DATA"
-  poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$ENDPOINT" "$PORT" "$EXPECTED_SIZE"
+  read -r DEPLOYMENT INSTANCE NAME ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
+  poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$ENDPOINT" "$PORT" "$VALIDATION_STRING"
 done
