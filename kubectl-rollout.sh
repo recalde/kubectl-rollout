@@ -15,8 +15,8 @@ log() {
 }
 
 scale_deployment() {
-  local INSTANCE=$1 DEPLOYMENT=$2 SELECTOR=$3 TARGET_REPLICAS=$4 SCALING_DELAY=$5 SCALING_INCREMENT=$6
-  log "Starting rollout for $DEPLOYMENT (Target: $TARGET_REPLICAS, Increment: $SCALING_INCREMENT, Pause: $SCALING_DELAY)"
+  local INSTANCE=$1 DEPLOYMENT=$2 SELECTOR=$3 TARGET_REPLICAS=$4 SCALE_DELAY=$5 SCALE_INCREMENT=$6
+  log "Starting rollout for $DEPLOYMENT (Target: $TARGET_REPLICAS, Increment: $SCALE_INCREMENT, Pause: $SCALE_DELAY sec)"
 
   local CURRENT_REPLICAS
   CURRENT_REPLICAS=$(kubectl get deployment "$DEPLOYMENT" -o=jsonpath='{.spec.replicas}' 2>/dev/null) || {
@@ -25,7 +25,7 @@ scale_deployment() {
   }
 
   while (( CURRENT_REPLICAS < TARGET_REPLICAS )); do
-    local NEW_REPLICAS=$(( CURRENT_REPLICAS + SCALING_INCREMENT > TARGET_REPLICAS ? TARGET_REPLICAS : CURRENT_REPLICAS + SCALING_INCREMENT ))
+    local NEW_REPLICAS=$(( CURRENT_REPLICAS + SCALE_INCREMENT > TARGET_REPLICAS ? TARGET_REPLICAS : CURRENT_REPLICAS + SCALE_INCREMENT ))
     log "Scaling $DEPLOYMENT to $NEW_REPLICAS replicas..."
     if ! kubectl scale deployment "$DEPLOYMENT" --replicas="$NEW_REPLICAS" 2>/dev/null; then
       log "❌ ERROR: Failed to scale $DEPLOYMENT to $NEW_REPLICAS replicas"
@@ -33,8 +33,8 @@ scale_deployment() {
     fi
 
     if (( NEW_REPLICAS < TARGET_REPLICAS )); then
-      log "Waiting $SCALING_DELAY before next increment..."
-      sleep "${SCALING_DELAY%s}"
+      log "Waiting $SCALE_DELAY sec before next increment..."
+      sleep "$SCALE_DELAY"
     fi
 
     CURRENT_REPLICAS=$NEW_REPLICAS
@@ -55,8 +55,8 @@ wait_for_deployment_ready() {
 poll_pods_http() {
   local INSTANCE=$1 DEPLOYMENT=$2 SELECTOR=$3 TARGET_REPLICAS=$4 WAIT_BEFORE_POLL=$5 HTTP_ENDPOINT=$6 HTTP_PORT=$7 VALIDATION_STRING=$8 RETRY_DELAY=$9 MAX_RETRIES=${10}
   
-  log "⌛ Waiting $WAIT_BEFORE_POLL before polling pods for $DEPLOYMENT..."
-  sleep "$(echo "$WAIT_BEFORE_POLL" | sed 's/[a-zA-Z]//g')"  # Fixed sleep issue
+  log "⌛ Waiting $WAIT_BEFORE_POLL sec before polling pods for $DEPLOYMENT..."
+  sleep "$WAIT_BEFORE_POLL"
 
   log "Polling pods for $DEPLOYMENT (Validation: '$VALIDATION_STRING') on port $HTTP_PORT..."
 
@@ -95,33 +95,33 @@ poll_pods_http() {
       return 0
     fi
 
-    log "🔄 Retrying ${#NEXT_ROUND[@]} failed pods in $RETRY_DELAY..."
-    sleep "$(echo "$RETRY_DELAY" | sed 's/[a-zA-Z]//g')"  # Fixed sleep issue
+    log "🔄 Retrying ${#NEXT_ROUND[@]} failed pods in $RETRY_DELAY sec..."
+    sleep "$RETRY_DELAY"
   done
 
   log "⚠️ WARNING: Some pods did not become ready: ${NEXT_ROUND[*]}"
 }
 
 ### **🛠 Deployment Configuration**
-# Base Configuration
+# Base Configuration (All values in **seconds**)
 APP_INSTANCE="app-instance"
 DEPLOYMENT_NAMES=("deploy1" "deploy2" "deploy3")
 DEPLOYMENT_SELECTORS=("deploy1" "deploy2" "deploy3")
 DESIRED_REPLICAS=(10 5 15)
-SCALING_DELAY=("30s" "20s" "40s")
-SCALING_INCREMENT=(2 3 2)
-WAIT_BEFORE_POLL=("15s" "20s" "30s")
+SCALE_DELAY=(30 20 40)
+SCALE_INCREMENT=(2 3 2)
+WAIT_BEFORE_POLL=(15 20 30)
 HTTP_ENDPOINT="/api/v1/readiness"
 HTTP_PORT=(8080 9090 8000)
 VALIDATION_STRING='{"ClusterSize":4}'
-RETRY_DELAY=("10s" "15s" "20s")
+RETRY_DELAY=(10 15 20)
 MAX_RETRIES=(5 6 7)
 
 # Define deployment waves
 DEPLOYMENTS=(
-  "1 $APP_INSTANCE ${DEPLOYMENT_NAMES[0]} ${DEPLOYMENT_SELECTORS[0]} ${DESIRED_REPLICAS[0]} ${SCALING_DELAY[0]} ${SCALING_INCREMENT[0]} ${WAIT_BEFORE_POLL[0]} $HTTP_ENDPOINT ${HTTP_PORT[0]} '$VALIDATION_STRING' ${RETRY_DELAY[0]} ${MAX_RETRIES[0]}"
-  "1 $APP_INSTANCE ${DEPLOYMENT_NAMES[1]} ${DEPLOYMENT_SELECTORS[1]} ${DESIRED_REPLICAS[1]} ${SCALING_DELAY[1]} ${SCALING_INCREMENT[1]} ${WAIT_BEFORE_POLL[1]} $HTTP_ENDPOINT ${HTTP_PORT[1]} '$VALIDATION_STRING' ${RETRY_DELAY[1]} ${MAX_RETRIES[1]}"
-  "2 $APP_INSTANCE ${DEPLOYMENT_NAMES[2]} ${DEPLOYMENT_SELECTORS[2]} ${DESIRED_REPLICAS[2]} ${SCALING_DELAY[2]} ${SCALING_INCREMENT[2]} ${WAIT_BEFORE_POLL[2]} $HTTP_ENDPOINT ${HTTP_PORT[2]} '$VALIDATION_STRING' ${RETRY_DELAY[2]} ${MAX_RETRIES[2]}"
+  "1 $APP_INSTANCE ${DEPLOYMENT_NAMES[0]} ${DEPLOYMENT_SELECTORS[0]} ${DESIRED_REPLICAS[0]} ${SCALE_DELAY[0]} ${SCALE_INCREMENT[0]} ${WAIT_BEFORE_POLL[0]} $HTTP_ENDPOINT ${HTTP_PORT[0]} '$VALIDATION_STRING' ${RETRY_DELAY[0]} ${MAX_RETRIES[0]}"
+  "1 $APP_INSTANCE ${DEPLOYMENT_NAMES[1]} ${DEPLOYMENT_SELECTORS[1]} ${DESIRED_REPLICAS[1]} ${SCALE_DELAY[1]} ${SCALE_INCREMENT[1]} ${WAIT_BEFORE_POLL[1]} $HTTP_ENDPOINT ${HTTP_PORT[1]} '$VALIDATION_STRING' ${RETRY_DELAY[1]} ${MAX_RETRIES[1]}"
+  "2 $APP_INSTANCE ${DEPLOYMENT_NAMES[2]} ${DEPLOYMENT_SELECTORS[2]} ${DESIRED_REPLICAS[2]} ${SCALE_DELAY[2]} ${SCALE_INCREMENT[2]} ${WAIT_BEFORE_POLL[2]} $HTTP_ENDPOINT ${HTTP_PORT[2]} '$VALIDATION_STRING' ${RETRY_DELAY[2]} ${MAX_RETRIES[2]}"
 )
 
 ### **🚀 Execute Deployment in Waves**
@@ -130,18 +130,18 @@ WAVE_DEPLOYMENTS=()
 WAVE_PROCESSES=()
 
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-  read -r WAVE INSTANCE DEPLOYMENT SELECTOR TARGET_REPLICAS SCALING_DELAY SCALING_INCREMENT WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
+  read -r WAVE INSTANCE DEPLOYMENT SELECTOR TARGET_REPLICAS SCALE_DELAY SCALE_INCREMENT WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
 
   if [[ "$CURRENT_WAVE" != "$WAVE" ]]; then
-    [[ -n "$CURRENT_WAVE" ]] && log "✅ All deployments in Wave $CURRENT_WAVE are fully ready!"
+    [[ -n "$CURRENT_WAVE" ]] && wait "${WAVE_PROCESSES[@]}" && log "✅ All deployments in Wave $CURRENT_WAVE are fully ready!"
     CURRENT_WAVE="$WAVE"
     log "🚀 Starting WAVE $CURRENT_WAVE..."
+    WAVE_PROCESSES=()
+    WAVE_DEPLOYMENTS=()
   fi
 
-  (
-    scale_deployment "$INSTANCE" "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$SCALING_DELAY" "$SCALING_INCREMENT"
-    wait_for_deployment_ready "$DEPLOYMENT"
-  ) &
+  ( scale_deployment "$INSTANCE" "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$SCALE_DELAY" "$SCALE_INCREMENT"
+    wait_for_deployment_ready "$DEPLOYMENT" ) &
 
   WAVE_PROCESSES+=($!)
   WAVE_DEPLOYMENTS+=("$APP_DATA")
