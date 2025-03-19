@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pod-scaler-job
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: pod-scaler-sa
+      containers:
+        - name: pod-scaler
+          image: your-registry/pod-scaler:latest  # Replace with your image
+          imagePullPolicy: Always
+          env:
+            - name: CONFIG_PATH
+              value: "/config/deployments.yaml"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /config
+              readOnly: true
+            - name: kubeconfig
+              mountPath: /root/.kube
+              readOnly: true
+      volumes:
+        - name: config-volume
+          configMap:
+            name: pod-scaler-config  # Mounts the ConfigMap containing scaling rules
+        - name: kubeconfig
+          secret:
+            secretName: kubeconfig-secret  # Kubeconfig secret (if needed)
