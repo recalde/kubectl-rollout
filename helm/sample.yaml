@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-scaler-config
+data:
+  deployments.yaml: |
+    deployments:
+      - name: "service-a"
+        initialReplicas: 1
+        maxReplicas: 10
+        scaleStep: 2
+        scaleInterval: "30s"
+        wave: 1
+        validation:
+          type: "http"
+          url: "http://{pod_ip}:8080/health"
+          method: "GET"
+          validationDelay: "10s"
+          check:
+            field: "active_connections"
+            condition: ">"
+            value: 10
+
+      - name: "service-b"
+        initialReplicas: 2
+        maxReplicas: 15
+        scaleStep: 3
+        scaleInterval: "45s"
+        wave: 2
+        validation:
+          type: "http"
+          url: "http://{pod_ip}:8080/status"
+          method: "POST"
+          validationDelay: "20s"
+          body: '{ "check": "readiness" }'
+          headers:
+            Content-Type: "application/json"
+          check:
+            field: "ready"
+            condition: "=="
+            value: true
+
+      - name: "service-c"
+        initialReplicas: 1
+        maxReplicas: 5
+        scaleStep: 1
+        scaleInterval: "20s"
+        wave: 2
+        validation:
+          type: "http"
+          url: "http://{pod_ip}:9090/metrics"
+          method: "GET"
+          validationDelay: "5s"
+          check:
+            field: "queue_length"
+            condition: "<"
+            value: 5
