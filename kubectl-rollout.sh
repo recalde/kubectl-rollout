@@ -102,6 +102,28 @@ poll_pods_http() {
   log "⚠️ WARNING: Some pods did not become ready: ${NEXT_ROUND[*]}"
 }
 
+### **🛠 Deployment Configuration**
+# Base Configuration
+APP_INSTANCE="app-instance"
+DEPLOYMENT_NAMES=("deploy1" "deploy2" "deploy3")
+DEPLOYMENT_SELECTORS=("deploy1" "deploy2" "deploy3")
+DESIRED_REPLICAS=(10 5 15)
+SCALING_DELAY=("30s" "20s" "40s")
+SCALING_INCREMENT=(2 3 2)
+WAIT_BEFORE_POLL=("15s" "20s" "30s")
+HTTP_ENDPOINT="/api/v1/readiness"
+HTTP_PORT=(8080 9090 8000)
+VALIDATION_STRING='{"ClusterSize":4}'
+RETRY_DELAY=("10s" "15s" "20s")
+MAX_RETRIES=(5 6 7)
+
+# Define deployment waves
+DEPLOYMENTS=(
+  "1 $APP_INSTANCE ${DEPLOYMENT_NAMES[0]} ${DEPLOYMENT_SELECTORS[0]} ${DESIRED_REPLICAS[0]} ${SCALING_DELAY[0]} ${SCALING_INCREMENT[0]} ${WAIT_BEFORE_POLL[0]} $HTTP_ENDPOINT ${HTTP_PORT[0]} '$VALIDATION_STRING' ${RETRY_DELAY[0]} ${MAX_RETRIES[0]}"
+  "1 $APP_INSTANCE ${DEPLOYMENT_NAMES[1]} ${DEPLOYMENT_SELECTORS[1]} ${DESIRED_REPLICAS[1]} ${SCALING_DELAY[1]} ${SCALING_INCREMENT[1]} ${WAIT_BEFORE_POLL[1]} $HTTP_ENDPOINT ${HTTP_PORT[1]} '$VALIDATION_STRING' ${RETRY_DELAY[1]} ${MAX_RETRIES[1]}"
+  "2 $APP_INSTANCE ${DEPLOYMENT_NAMES[2]} ${DEPLOYMENT_SELECTORS[2]} ${DESIRED_REPLICAS[2]} ${SCALING_DELAY[2]} ${SCALING_INCREMENT[2]} ${WAIT_BEFORE_POLL[2]} $HTTP_ENDPOINT ${HTTP_PORT[2]} '$VALIDATION_STRING' ${RETRY_DELAY[2]} ${MAX_RETRIES[2]}"
+)
+
 ### **🚀 Execute Deployment in Waves**
 CURRENT_WAVE=""
 WAVE_DEPLOYMENTS=()
@@ -111,13 +133,7 @@ for APP_DATA in "${DEPLOYMENTS[@]}"; do
   read -r WAVE INSTANCE DEPLOYMENT SELECTOR TARGET_REPLICAS SCALING_DELAY SCALING_INCREMENT WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
 
   if [[ "$CURRENT_WAVE" != "$WAVE" ]]; then
-    if [[ -n "$CURRENT_WAVE" && ${#WAVE_PROCESSES[@]} -gt 0 ]]; then
-      log "⌛ Waiting for all deployments in Wave $CURRENT_WAVE to finish..."
-      wait "${WAVE_PROCESSES[@]}"
-      log "✅ All deployments in Wave $CURRENT_WAVE are fully ready!"
-      WAVE_PROCESSES=()
-    fi
-
+    [[ -n "$CURRENT_WAVE" ]] && log "✅ All deployments in Wave $CURRENT_WAVE are fully ready!"
     CURRENT_WAVE="$WAVE"
     log "🚀 Starting WAVE $CURRENT_WAVE..."
   fi
@@ -131,16 +147,11 @@ for APP_DATA in "${DEPLOYMENTS[@]}"; do
   WAVE_DEPLOYMENTS+=("$APP_DATA")
 done
 
-if [[ ${#WAVE_PROCESSES[@]} -gt 0 ]]; then
-  log "⌛ Waiting for all deployments in Wave $CURRENT_WAVE to finish..."
-  wait "${WAVE_PROCESSES[@]}"
-  log "✅ All deployments in Wave $CURRENT_WAVE are fully ready!"
-fi
+wait "${WAVE_PROCESSES[@]}"
+log "✅ All deployments in Wave $CURRENT_WAVE are fully ready!"
 
-# Now, start polling for readiness after all deployments in the wave are fully ready
 for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
-  read -r _ INSTANCE DEPLOYMENT SELECTOR TARGET_REPLICAS _ _ WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
-  poll_pods_http "$INSTANCE" "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$WAIT_BEFORE_POLL" "$HTTP_ENDPOINT" "$HTTP_PORT" "$VALIDATION_STRING" "$RETRY_DELAY" "$MAX_RETRIES"
+  poll_pods_http "$APP_DATA"
 done
 
-log "✅ All waves completed successfully!"
+log "🎉 ✅ All waves completed successfully!"
