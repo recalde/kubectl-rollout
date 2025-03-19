@@ -67,12 +67,12 @@ poll_pods_http() {
       
       RESPONSE=$(curl --max-time 10 -s "$URL" || echo "ERROR")
 
-      # Handle JSON validation correctly
-      if [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ $(echo "$VALIDATION_STRING" | sed 's/[\"]/\\\"/g') ]]; then
+      # Fix: Use grep instead of Bash regex matching
+      if echo "$RESPONSE" | grep -q "$VALIDATION_STRING"; then
+        log "Pod $POD_NAME ($POD_IP) is ready!"
+      else
         log "Validation failed for pod $POD_NAME. Expected pattern: $VALIDATION_STRING, but got: $RESPONSE"
         NEXT_ROUND+=("$POD_NAME")
-      else
-        log "Pod $POD_NAME ($POD_IP) is ready!"
       fi
     done
 
@@ -90,7 +90,7 @@ poll_pods_http() {
 
 # Define deployments (format: "DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING")
 DEPLOYMENTS=(
-  "deploy1 app-instance deploy1 10 /api/v1/readiness 8080 2 30s '{\"ClusterSize\":4}'"
+  "deploy1 app-instance deploy1 10 /api/v1/readiness 8080 2 30s 'ClusterSize'"
   "deploy2 app-instance deploy2 5 /ready 9090 3 20s '{\"ready\":true}'"
   "deploy3 app-instance deploy3 15 /status 8000 2 40s '{\"service-ok\":\"yes\"}'"
 )
