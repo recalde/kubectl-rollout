@@ -15,32 +15,32 @@ log() {
 }
 
 scale_deployment() {
-  local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 TARGET_REPLICAS=$4 INCREMENT=$5 PAUSE=$6
-  log "Starting rollout for $DEPLOYMENT_NAME (Target: $TARGET_REPLICAS, Increment: $INCREMENT, Pause: $PAUSE)"
+  local INSTANCE=$1 DEPLOYMENT=$2 SELECTOR=$3 TARGET_REPLICAS=$4 SCALING_DELAY=$5 SCALING_INCREMENT=$6
+  log "Starting rollout for $DEPLOYMENT (Target: $TARGET_REPLICAS, Increment: $SCALING_INCREMENT, Pause: $SCALING_DELAY)"
 
   local CURRENT_REPLICAS
-  CURRENT_REPLICAS=$(kubectl get deployment "$DEPLOYMENT_NAME" -o=jsonpath='{.spec.replicas}' 2>/dev/null) || {
-    log "❌ ERROR: Failed to get replica count for $DEPLOYMENT_NAME"
+  CURRENT_REPLICAS=$(kubectl get deployment "$DEPLOYMENT" -o=jsonpath='{.spec.replicas}' 2>/dev/null) || {
+    log "❌ ERROR: Failed to get replica count for $DEPLOYMENT"
     return 1
   }
 
   while (( CURRENT_REPLICAS < TARGET_REPLICAS )); do
-    local NEW_REPLICAS=$(( CURRENT_REPLICAS + INCREMENT > TARGET_REPLICAS ? TARGET_REPLICAS : CURRENT_REPLICAS + INCREMENT ))
-    log "Scaling $DEPLOYMENT_NAME to $NEW_REPLICAS replicas..."
-    if ! kubectl scale deployment "$DEPLOYMENT_NAME" --replicas="$NEW_REPLICAS" 2>/dev/null; then
-      log "❌ ERROR: Failed to scale $DEPLOYMENT_NAME to $NEW_REPLICAS replicas"
+    local NEW_REPLICAS=$(( CURRENT_REPLICAS + SCALING_INCREMENT > TARGET_REPLICAS ? TARGET_REPLICAS : CURRENT_REPLICAS + SCALING_INCREMENT ))
+    log "Scaling $DEPLOYMENT to $NEW_REPLICAS replicas..."
+    if ! kubectl scale deployment "$DEPLOYMENT" --replicas="$NEW_REPLICAS" 2>/dev/null; then
+      log "❌ ERROR: Failed to scale $DEPLOYMENT to $NEW_REPLICAS replicas"
       return 1
     fi
 
     if (( NEW_REPLICAS < TARGET_REPLICAS )); then
-      log "Waiting $PAUSE before next increment..."
-      sleep "${PAUSE%s}"
+      log "Waiting $SCALING_DELAY before next increment..."
+      sleep "${SCALING_DELAY%s}"
     fi
 
     CURRENT_REPLICAS=$NEW_REPLICAS
   done
 
-  log "✅ Scaling complete for $DEPLOYMENT_NAME."
+  log "✅ Scaling complete for $DEPLOYMENT."
 }
 
 wait_for_deployment_ready() {
@@ -53,12 +53,12 @@ wait_for_deployment_ready() {
 }
 
 poll_pods_http() {
-  local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 TARGET_REPLICAS=$4 ENDPOINT=$5 PORT=$6 INCREMENT=$7 PAUSE=$8 VALIDATION_STRING=$9 WAIT_BEFORE_POLL=${10} RETRY_DELAY=${11} MAX_RETRIES=${12}
+  local INSTANCE=$1 DEPLOYMENT=$2 SELECTOR=$3 TARGET_REPLICAS=$4 WAIT_BEFORE_POLL=$5 HTTP_ENDPOINT=$6 HTTP_PORT=$7 VALIDATION_STRING=$8 RETRY_DELAY=$9 MAX_RETRIES=${10}
   
-  log "⌛ Waiting $WAIT_BEFORE_POLL before polling pods for $DEPLOYMENT_NAME..."
+  log "⌛ Waiting $WAIT_BEFORE_POLL before polling pods for $DEPLOYMENT..."
   sleep "${WAIT_BEFORE_POLL%s}"
 
-  log "Polling pods for $DEPLOYMENT_NAME (Validation: '$VALIDATION_STRING') on port $PORT..."
+  log "Polling pods for $DEPLOYMENT (Validation: '$VALIDATION_STRING') on port $HTTP_PORT..."
 
   VALIDATION_STRING=$(echo "$VALIDATION_STRING" | sed "s/^'//;s/'$//")  # Strip surrounding single quotes
 
@@ -66,11 +66,11 @@ poll_pods_http() {
   declare -A POD_IP_MAP
   while IFS=' ' read -r POD_NAME POD_IP; do
     [[ -n "$POD_NAME" && -n "$POD_IP" ]] && POD_IP_MAP["$POD_NAME"]="$POD_IP"
-  done < <(kubectl get pods -l "app.kubernetes.io/instance=${INSTANCE},app.kubernetes.io/name=${NAME}" \
+  done < <(kubectl get pods -l "app.kubernetes.io/instance=${INSTANCE},app.kubernetes.io/name=${SELECTOR}" \
     --field-selector=status.phase=Running -o=jsonpath="{range .items[*]}{.metadata.name} {.status.podIP}{'\n'}{end}" 2>/dev/null)
 
   if [[ ${#POD_IP_MAP[@]} -eq 0 ]]; then
-    log "❌ ERROR: No running pods with valid IPs found for $DEPLOYMENT_NAME."
+    log "❌ ERROR: No running pods with valid IPs found for $DEPLOYMENT."
     return 1
   fi
 
@@ -78,7 +78,7 @@ poll_pods_http() {
     local NEXT_ROUND=()
     for POD_NAME in "${!POD_IP_MAP[@]}"; do
       local POD_IP=${POD_IP_MAP[$POD_NAME]}
-      local URL="http://${POD_IP}:${PORT}${ENDPOINT}"
+      local URL="http://${POD_IP}:${HTTP_PORT}${HTTP_ENDPOINT}"
       log "Checking $URL for pod $POD_NAME..."
       
       RESPONSE=$(curl --max-time 10 -s "$URL" || echo "ERROR")
@@ -92,7 +92,7 @@ poll_pods_http() {
     done
 
     if [[ ${#NEXT_ROUND[@]} -eq 0 ]]; then
-      log "✅ All pods in $DEPLOYMENT_NAME are confirmed ready."
+      log "✅ All pods in $DEPLOYMENT are confirmed ready."
       return 0
     fi
 
@@ -104,22 +104,25 @@ poll_pods_http() {
 }
 
 ### **🛠 Deployment Configuration**
+# Base Configuration
 APP_INSTANCE="app-instance"
 DEPLOYMENT_NAMES=("deploy1" "deploy2" "deploy3")
 DEPLOYMENT_SELECTORS=("deploy1" "deploy2" "deploy3")
-HTTP_ENDPOINT="/api/v1/readiness"
-VALIDATION_STRING='{"ClusterSize":4}'
 DESIRED_REPLICAS=(10 5 15)
-PORT=(8080 9090 8000)
-DELAY=("30s" "20s" "40s")
+SCALING_DELAY=("30s" "20s" "40s")
+SCALING_INCREMENT=(2 3 2)
 WAIT_BEFORE_POLL=("15s" "20s" "30s")
+HTTP_ENDPOINT="/api/v1/readiness"
+HTTP_PORT=(8080 9090 8000)
+VALIDATION_STRING='{"ClusterSize":4}'
 RETRY_DELAY=("10s" "15s" "20s")
 MAX_RETRIES=(5 6 7)
 
+# Define deployment waves
 DEPLOYMENTS=(
-  "1 ${DEPLOYMENT_NAMES[0]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[0]} ${DESIRED_REPLICAS[0]} $HTTP_ENDPOINT ${PORT[0]} 2 ${DELAY[0]} '$VALIDATION_STRING' ${WAIT_BEFORE_POLL[0]} ${RETRY_DELAY[0]} ${MAX_RETRIES[0]}"
-  "1 ${DEPLOYMENT_NAMES[1]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[1]} ${DESIRED_REPLICAS[1]} $HTTP_ENDPOINT ${PORT[1]} 3 ${DELAY[1]} '$VALIDATION_STRING' ${WAIT_BEFORE_POLL[1]} ${RETRY_DELAY[1]} ${MAX_RETRIES[1]}"
-  "2 ${DEPLOYMENT_NAMES[2]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[2]} ${DESIRED_REPLICAS[2]} $HTTP_ENDPOINT ${PORT[2]} 2 ${DELAY[2]} '$VALIDATION_STRING' ${WAIT_BEFORE_POLL[2]} ${RETRY_DELAY[2]} ${MAX_RETRIES[2]}"
+  "1 $APP_INSTANCE ${DEPLOYMENT_NAMES[0]} ${DEPLOYMENT_SELECTORS[0]} ${DESIRED_REPLICAS[0]} ${SCALING_DELAY[0]} ${SCALING_INCREMENT[0]} ${WAIT_BEFORE_POLL[0]} $HTTP_ENDPOINT ${HTTP_PORT[0]} '$VALIDATION_STRING' ${RETRY_DELAY[0]} ${MAX_RETRIES[0]}"
+  "1 $APP_INSTANCE ${DEPLOYMENT_NAMES[1]} ${DEPLOYMENT_SELECTORS[1]} ${DESIRED_REPLICAS[1]} ${SCALING_DELAY[1]} ${SCALING_INCREMENT[1]} ${WAIT_BEFORE_POLL[1]} $HTTP_ENDPOINT ${HTTP_PORT[1]} '$VALIDATION_STRING' ${RETRY_DELAY[1]} ${MAX_RETRIES[1]}"
+  "2 $APP_INSTANCE ${DEPLOYMENT_NAMES[2]} ${DEPLOYMENT_SELECTORS[2]} ${DESIRED_REPLICAS[2]} ${SCALING_DELAY[2]} ${SCALING_INCREMENT[2]} ${WAIT_BEFORE_POLL[2]} $HTTP_ENDPOINT ${HTTP_PORT[2]} '$VALIDATION_STRING' ${RETRY_DELAY[2]} ${MAX_RETRIES[2]}"
 )
 
 ### **🚀 Execute Deployment in Waves**
@@ -127,7 +130,7 @@ CURRENT_WAVE=""
 WAVE_DEPLOYMENTS=()
 
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-  read -r WAVE DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING WAIT_BEFORE_POLL RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
+  read -r WAVE INSTANCE DEPLOYMENT SELECTOR TARGET_REPLICAS SCALING_DELAY SCALING_INCREMENT WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
 
   if [[ "$CURRENT_WAVE" != "$WAVE" ]]; then
     [[ -n "$CURRENT_WAVE" ]] && log "✅ All deployments in Wave $CURRENT_WAVE completed!"
@@ -135,14 +138,14 @@ for APP_DATA in "${DEPLOYMENTS[@]}"; do
     log "🚀 Starting WAVE $CURRENT_WAVE..."
   fi
 
-  scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$INCREMENT" "$PAUSE"
+  scale_deployment "$INSTANCE" "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$SCALING_DELAY" "$SCALING_INCREMENT"
   WAVE_DEPLOYMENTS+=("$APP_DATA")
 done
 
 for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
-  read -r _ DEPLOYMENT _ _ _ _ _ _ _ WAIT_BEFORE_POLL RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
+  read -r _ INSTANCE DEPLOYMENT SELECTOR TARGET_REPLICAS _ _ WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
   wait_for_deployment_ready "$DEPLOYMENT"
-  poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$ENDPOINT" "$PORT" "$INCREMENT" "$PAUSE" "$VALIDATION_STRING" "$WAIT_BEFORE_POLL" "$RETRY_DELAY" "$MAX_RETRIES"
+  poll_pods_http "$INSTANCE" "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$WAIT_BEFORE_POLL" "$HTTP_ENDPOINT" "$HTTP_PORT" "$VALIDATION_STRING" "$RETRY_DELAY" "$MAX_RETRIES"
 done
 
 log "✅ All waves completed successfully!"
