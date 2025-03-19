@@ -82,6 +82,13 @@ poll_pods_http() {
   log "WARNING: Some pods did not become ready: ${NEXT_ROUND[*]}"
 }
 
+# Define deployments (format: "DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING")
+DEPLOYMENTS=(
+  "deploy1 app-instance deploy1 10 /api/v1/readiness 8080 2 30s 'cluster-size: 10'"
+  "deploy2 app-instance deploy2 5 /ready 9090 3 20s 'ready: true'"
+  "deploy3 app-instance deploy3 15 /status 8000 2 40s 'service-ok: yes'"
+)
+
 # **Step 1: Scale Deployments**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
   read -r DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
