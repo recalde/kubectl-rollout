@@ -15,7 +15,7 @@ log() {
 }
 
 scale_deployment() {
-    local DEPLOYMENT_NAME=$1 TARGET_REPLICAS=$2 INCREMENT=$3 PAUSE=$4
+    local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 TARGET_REPLICAS=$4 INCREMENT=$5 PAUSE=$6
     log "Starting rollout for $DEPLOYMENT_NAME (Target: $TARGET_REPLICAS, Increment: $INCREMENT, Pause: $PAUSE)"
 
     local CURRENT_REPLICAS
@@ -41,11 +41,11 @@ wait_for_deployment_ready() {
 }
 
 poll_pods_http() {
-    local DEPLOYMENT_NAME=$1 ENDPOINT=$2 EXPECTED_SIZE=$3 RETRY_INTERVAL=5 MAX_RETRIES=5
+    local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 ENDPOINT=$4 EXPECTED_SIZE=$5 RETRY_INTERVAL=5 MAX_RETRIES=5
     log "Polling pods for $DEPLOYMENT_NAME (Expected size: $EXPECTED_SIZE)..."
 
-    # Fetch pod names and IPs for this deployment
-    readarray -t PODS < <(kubectl get pods --field-selector=status.phase=Running -o=jsonpath="{range .items[?(@.metadata.ownerReferences[0].name=='$DEPLOYMENT_NAME')]}{.metadata.name} {.status.podIP}{"\n"}{end}")
+    # Fetch pod names and IPs using label selectors
+    readarray -t PODS < <(kubectl get pods -l "app.kubernetes.io/instance=${INSTANCE},app.kubernetes.io/name=${NAME}" --field-selector=status.phase=Running -o=jsonpath="{range .items[*]}{.metadata.name} {.status.podIP}{"\n"}{end}")
 
     [[ ${#PODS[@]} -eq 0 ]] && log "ERROR: No running pods found for $DEPLOYMENT_NAME." && return 1
 
@@ -66,27 +66,27 @@ poll_pods_http() {
     [[ ${#PODS[@]} -gt 0 ]] && log "WARNING: Some pods did not become ready: ${PODS[*]}" || log "All pods in $DEPLOYMENT_NAME are confirmed ready."
 }
 
-# Define deployments (format: "NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE")
+# Define deployments (format: "DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE")
 DEPLOYMENTS=(
-    "app1 10 /api/v1/readiness 2 30s"
-    "app2 5 /ready 3 20s"
-    "app3 15 /status 2 40s"
+    "app1 app1-instance app1-name 10 /api/v1/readiness 2 30s"
+    "app2 app2-instance app2-name 5 /ready 3 20s"
+    "app3 app3-instance app3-name 15 /status 2 40s"
 )
 
 # **Step 1: Scale Deployments**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-    read -r DEPLOYMENT EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
-    scale_deployment "$DEPLOYMENT" "$EXPECTED_SIZE" "$INCREMENT" "$PAUSE"
+    read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
+    scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$EXPECTED_SIZE" "$INCREMENT" "$PAUSE"
 done
 
 # **Step 2: Wait for Deployments to be Ready**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-    read -r DEPLOYMENT EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
+    read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
     wait_for_deployment_ready "$DEPLOYMENT"
 done
 
 # **Step 3: Poll Pods for Readiness**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-    read -r DEPLOYMENT EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
-    poll_pods_http "$DEPLOYMENT" "$ENDPOINT" "$EXPECTED_SIZE"
+    read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
+    poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$ENDPOINT" "$EXPECTED_SIZE"
 done
