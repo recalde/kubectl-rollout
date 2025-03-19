@@ -41,7 +41,9 @@ wait_for_deployment_ready() {
 }
 
 poll_pods_http() {
-  local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 ENDPOINT=$4 PORT=$5 VALIDATION_STRING=$6 RETRY_INTERVAL=5 MAX_RETRIES=5
+  local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 TARGET_REPLICAS=$4 ENDPOINT=$5 PORT=$6 INCREMENT=$7 PAUSE=$8 VALIDATION_STRING=$9
+  local RETRY_INTERVAL=5 MAX_RETRIES=5
+
   log "Polling pods for $DEPLOYMENT_NAME (Validation: '$VALIDATION_STRING') on port $PORT..."
 
   # Fetch all pod names and IPs in a single kubectl call and store them in an associative array
@@ -62,8 +64,12 @@ poll_pods_http() {
       local POD_IP=${POD_IP_MAP[$POD_NAME]}
       local URL="http://${POD_IP}:${PORT}${ENDPOINT}"
       log "Checking $URL for pod $POD_NAME..."
+      
       RESPONSE=$(curl --max-time 10 -s "$URL" || echo "ERROR")
-      if [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ "$VALIDATION_STRING" ]]; then
+
+      # Handle JSON validation correctly
+      if [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ $(echo "$VALIDATION_STRING" | sed 's/[\"]/\\\"/g') ]]; then
+        log "Validation failed for pod $POD_NAME. Expected pattern: $VALIDATION_STRING, but got: $RESPONSE"
         NEXT_ROUND+=("$POD_NAME")
       else
         log "Pod $POD_NAME ($POD_IP) is ready!"
@@ -84,9 +90,9 @@ poll_pods_http() {
 
 # Define deployments (format: "DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING")
 DEPLOYMENTS=(
-  "deploy1 app-instance deploy1 10 /api/v1/readiness 8080 2 30s 'cluster-size: 10'"
-  "deploy2 app-instance deploy2 5 /ready 9090 3 20s 'ready: true'"
-  "deploy3 app-instance deploy3 15 /status 8000 2 40s 'service-ok: yes'"
+  "deploy1 app-instance deploy1 10 /api/v1/readiness 8080 2 30s '{\"ClusterSize\":4}'"
+  "deploy2 app-instance deploy2 5 /ready 9090 3 20s '{\"ready\":true}'"
+  "deploy3 app-instance deploy3 15 /status 8000 2 40s '{\"service-ok\":\"yes\"}'"
 )
 
 # **Step 1: Scale Deployments**
@@ -104,5 +110,5 @@ done
 # **Step 3: Poll Pods for Readiness**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
   read -r DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
-  poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$ENDPOINT" "$PORT" "$VALIDATION_STRING"
+  poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$ENDPOINT" "$PORT" "$INCREMENT" "$PAUSE" "$VALIDATION_STRING"
 done
