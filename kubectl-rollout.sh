@@ -44,28 +44,42 @@ poll_pods_http() {
   local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 ENDPOINT=$4 PORT=$5 EXPECTED_SIZE=$6 RETRY_INTERVAL=5 MAX_RETRIES=5
   log "Polling pods for $DEPLOYMENT_NAME (Expected size: $EXPECTED_SIZE) on port $PORT..."
 
-  # Fetch pod names & IPs using label selectors (ensuring we get only running pods)
-  readarray -t PODS < <(kubectl get pods -l "app.kubernetes.io/instance=${INSTANCE},app.kubernetes.io/name=${NAME}" \
+  # Fetch all pod names and IPs in a single kubectl call and store them in an associative array
+  declare -A POD_IP_MAP
+  while IFS=' ' read -r POD_NAME POD_IP; do
+    [[ -n "$POD_NAME" && -n "$POD_IP" ]] && POD_IP_MAP["$POD_NAME"]="$POD_IP"
+  done < <(kubectl get pods -l "app.kubernetes.io/instance=${INSTANCE},app.kubernetes.io/name=${NAME}" \
     --field-selector=status.phase=Running -o=jsonpath="{range .items[*]}{.metadata.name} {.status.podIP}{'\n'}{end}")
 
-  [[ ${#PODS[@]} -eq 0 ]] && log "ERROR: No running pods found for $DEPLOYMENT_NAME." && return 1
+  if [[ ${#POD_IP_MAP[@]} -eq 0 ]]; then
+    log "ERROR: No running pods with valid IPs found for $DEPLOYMENT_NAME."
+    return 1
+  fi
 
-  for (( RETRIES=0; RETRIES < MAX_RETRIES && ${#PODS[@]} > 0; RETRIES++ )); do
+  for (( RETRIES=0; RETRIES < MAX_RETRIES; RETRIES++ )); do
     local NEXT_ROUND=()
-    for POD in "${PODS[@]}"; do
-      read -r POD_NAME POD_IP <<< "$POD"
-      [[ -z "$POD_IP" ]] && log "ERROR: Could not retrieve IP for pod $POD_NAME." && NEXT_ROUND+=("$POD_NAME") && continue
+    for POD_NAME in "${!POD_IP_MAP[@]}"; do
+      local POD_IP=${POD_IP_MAP[$POD_NAME]}
       local URL="http://${POD_IP}:${PORT}${ENDPOINT}"
       log "Checking $URL for pod $POD_NAME..."
       RESPONSE=$(curl --max-time 10 -s "$URL" || echo "ERROR")
-      [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ "cluster-size: $EXPECTED_SIZE" ]] && NEXT_ROUND+=("$POD_NAME") && continue
-      log "Pod $POD_NAME ($POD_IP) is ready!"
+      if [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ "cluster-size: $EXPECTED_SIZE" ]]; then
+        NEXT_ROUND+=("$POD_NAME")
+      else
+        log "Pod $POD_NAME ($POD_IP) is ready!"
+      fi
     done
-    PODS=("${NEXT_ROUND[@]}")
-    (( ${#PODS[@]} > 0 )) && log "Retrying ${#PODS[@]} failed pods in $RETRY_INTERVAL seconds..." && sleep $RETRY_INTERVAL
+
+    if [[ ${#NEXT_ROUND[@]} -eq 0 ]]; then
+      log "All pods in $DEPLOYMENT_NAME are confirmed ready."
+      return 0
+    fi
+
+    log "Retrying ${#NEXT_ROUND[@]} failed pods in $RETRY_INTERVAL seconds..."
+    sleep $RETRY_INTERVAL
   done
 
-  [[ ${#PODS[@]} -gt 0 ]] && log "WARNING: Some pods did not become ready: ${PODS[*]}" || log "All pods in $DEPLOYMENT_NAME are confirmed ready."
+  log "WARNING: Some pods did not become ready: ${NEXT_ROUND[*]}"
 }
 
 # Define deployments (format: "DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT PORT INCREMENT PAUSE")
