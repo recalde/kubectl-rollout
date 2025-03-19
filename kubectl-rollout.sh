@@ -41,11 +41,12 @@ wait_for_deployment_ready() {
 }
 
 poll_pods_http() {
-    local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 ENDPOINT=$4 EXPECTED_SIZE=$5 RETRY_INTERVAL=5 MAX_RETRIES=5
-    log "Polling pods for $DEPLOYMENT_NAME (Expected size: $EXPECTED_SIZE)..."
+    local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 ENDPOINT=$4 PORT=$5 EXPECTED_SIZE=$6 RETRY_INTERVAL=5 MAX_RETRIES=5
+    log "Polling pods for $DEPLOYMENT_NAME (Expected size: $EXPECTED_SIZE) on port $PORT..."
 
-    # Fetch pod names and IPs using label selectors
-    readarray -t PODS < <(kubectl get pods -l "app.kubernetes.io/instance=${INSTANCE},app.kubernetes.io/name=${NAME}" --field-selector=status.phase=Running -o=jsonpath="{range .items[*]}{.metadata.name} {.status.podIP}{"\n"}{end}")
+    # Fetch pod names & IPs using label selectors (ensuring we get only running pods)
+    readarray -t PODS < <(kubectl get pods -l "app.kubernetes.io/instance=${INSTANCE},app.kubernetes.io/name=${NAME}" \
+        --field-selector=status.phase=Running -o=jsonpath="{range .items[*]}{.metadata.name} {.status.podIP}{'\n'}{end}")
 
     [[ ${#PODS[@]} -eq 0 ]] && log "ERROR: No running pods found for $DEPLOYMENT_NAME." && return 1
 
@@ -53,10 +54,11 @@ poll_pods_http() {
         local NEXT_ROUND=()
         for POD in "${PODS[@]}"; do
             read -r POD_NAME POD_IP <<< "$POD"
-            local URL="http://${POD_IP}${ENDPOINT}"
+            [[ -z "$POD_IP" ]] && log "ERROR: Could not retrieve IP for pod $POD_NAME." && NEXT_ROUND+=("$POD_NAME") && continue
+            local URL="http://${POD_IP}:${PORT}${ENDPOINT}"
             log "Checking $URL for pod $POD_NAME..."
             RESPONSE=$(curl --max-time 10 -s "$URL" || echo "ERROR")
-            [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ "cluster-size: $EXPECTED_SIZE" ]] && NEXT_ROUND+=("$POD") && continue
+            [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ "cluster-size: $EXPECTED_SIZE" ]] && NEXT_ROUND+=("$POD_NAME") && continue
             log "Pod $POD_NAME ($POD_IP) is ready!"
         done
         PODS=("${NEXT_ROUND[@]}")
@@ -66,27 +68,27 @@ poll_pods_http() {
     [[ ${#PODS[@]} -gt 0 ]] && log "WARNING: Some pods did not become ready: ${PODS[*]}" || log "All pods in $DEPLOYMENT_NAME are confirmed ready."
 }
 
-# Define deployments (format: "DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE")
+# Define deployments (format: "DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT PORT INCREMENT PAUSE")
 DEPLOYMENTS=(
-    "app1 app1-instance app1-name 10 /api/v1/readiness 2 30s"
-    "app2 app2-instance app2-name 5 /ready 3 20s"
-    "app3 app3-instance app3-name 15 /status 2 40s"
+    "app1 app1-instance app1-name 10 /api/v1/readiness 8080 2 30s"
+    "app2 app2-instance app2-name 5 /ready 9090 3 20s"
+    "app3 app3-instance app3-name 15 /status 8000 2 40s"
 )
 
 # **Step 1: Scale Deployments**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-    read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
+    read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT PORT INCREMENT PAUSE <<< "$APP_DATA"
     scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$EXPECTED_SIZE" "$INCREMENT" "$PAUSE"
 done
 
 # **Step 2: Wait for Deployments to be Ready**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-    read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
+    read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT PORT INCREMENT PAUSE <<< "$APP_DATA"
     wait_for_deployment_ready "$DEPLOYMENT"
 done
 
 # **Step 3: Poll Pods for Readiness**
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-    read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE <<< "$APP_DATA"
-    poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$ENDPOINT" "$EXPECTED_SIZE"
+    read -r DEPLOYMENT INSTANCE NAME EXPECTED_SIZE ENDPOINT PORT INCREMENT PAUSE <<< "$APP_DATA"
+    poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$ENDPOINT" "$PORT" "$EXPECTED_SIZE"
 done
