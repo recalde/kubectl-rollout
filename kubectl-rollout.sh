@@ -53,8 +53,10 @@ wait_for_deployment_ready() {
 }
 
 poll_pods_http() {
-  local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 TARGET_REPLICAS=$4 ENDPOINT=$5 PORT=$6 INCREMENT=$7 PAUSE=$8 VALIDATION_STRING=$9
-  local RETRY_INTERVAL=5 MAX_RETRIES=5
+  local DEPLOYMENT_NAME=$1 INSTANCE=$2 NAME=$3 TARGET_REPLICAS=$4 ENDPOINT=$5 PORT=$6 INCREMENT=$7 PAUSE=$8 VALIDATION_STRING=$9 WAIT_BEFORE_POLL=${10} RETRY_DELAY=${11} MAX_RETRIES=${12}
+  
+  log "⌛ Waiting $WAIT_BEFORE_POLL before polling pods for $DEPLOYMENT_NAME..."
+  sleep "${WAIT_BEFORE_POLL%s}"
 
   log "Polling pods for $DEPLOYMENT_NAME (Validation: '$VALIDATION_STRING') on port $PORT..."
 
@@ -95,8 +97,8 @@ poll_pods_http() {
       return 0
     fi
 
-    log "🔄 Retrying ${#NEXT_ROUND[@]} failed pods in $RETRY_INTERVAL seconds..."
-    sleep $RETRY_INTERVAL
+    log "🔄 Retrying ${#NEXT_ROUND[@]} failed pods in $RETRY_DELAY..."
+    sleep "${RETRY_DELAY%s}"
   done
 
   log "⚠️ WARNING: Some pods did not become ready: ${NEXT_ROUND[*]}"
@@ -111,11 +113,14 @@ VALIDATION_STRING='{"ClusterSize":4}'
 DESIRED_REPLICAS=(10 5 15)
 PORT=(8080 9090 8000)
 DELAY=("30s" "20s" "40s")
+WAIT_BEFORE_POLL=("15s" "20s" "30s")  # New: Wait time before polling
+RETRY_DELAY=("10s" "15s" "20s")       # New: Delay between retries
+MAX_RETRIES=(5 6 7)                   # New: Max retry attempts
 
 DEPLOYMENTS=(
-  "1 ${DEPLOYMENT_NAMES[0]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[0]} ${DESIRED_REPLICAS[0]} $HTTP_ENDPOINT ${PORT[0]} 2 ${DELAY[0]} '$VALIDATION_STRING'"
-  "1 ${DEPLOYMENT_NAMES[1]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[1]} ${DESIRED_REPLICAS[1]} $HTTP_ENDPOINT ${PORT[1]} 3 ${DELAY[1]} '$VALIDATION_STRING'"
-  "2 ${DEPLOYMENT_NAMES[2]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[2]} ${DESIRED_REPLICAS[2]} $HTTP_ENDPOINT ${PORT[2]} 2 ${DELAY[2]} '$VALIDATION_STRING'"
+  "1 ${DEPLOYMENT_NAMES[0]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[0]} ${DESIRED_REPLICAS[0]} $HTTP_ENDPOINT ${PORT[0]} 2 ${DELAY[0]} '$VALIDATION_STRING' ${WAIT_BEFORE_POLL[0]} ${RETRY_DELAY[0]} ${MAX_RETRIES[0]}"
+  "1 ${DEPLOYMENT_NAMES[1]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[1]} ${DESIRED_REPLICAS[1]} $HTTP_ENDPOINT ${PORT[1]} 3 ${DELAY[1]} '$VALIDATION_STRING' ${WAIT_BEFORE_POLL[1]} ${RETRY_DELAY[1]} ${MAX_RETRIES[1]}"
+  "2 ${DEPLOYMENT_NAMES[2]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[2]} ${DESIRED_REPLICAS[2]} $HTTP_ENDPOINT ${PORT[2]} 2 ${DELAY[2]} '$VALIDATION_STRING' ${WAIT_BEFORE_POLL[2]} ${RETRY_DELAY[2]} ${MAX_RETRIES[2]}"
 )
 
 ### **🚀 Execute Deployment in Waves**
@@ -123,36 +128,28 @@ CURRENT_WAVE=""
 WAVE_PROCESSES=()
 
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-  read -r WAVE DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
+  read -r WAVE DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING WAIT_BEFORE_POLL RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
 
   if [[ "$CURRENT_WAVE" != "$WAVE" ]]; then
-    # Wait for all processes in the previous wave to complete before moving to next wave
     if [[ -n "$CURRENT_WAVE" && ${#WAVE_PROCESSES[@]} -gt 0 ]]; then
       log "⌛ Waiting for all deployments in Wave $CURRENT_WAVE to finish..."
-      wait "${WAVE_PROCESSES[@]}"  # Ensure all background jobs from the previous wave finish
+      wait "${WAVE_PROCESSES[@]}"
       log "✅ All deployments in Wave $CURRENT_WAVE completed!"
-      WAVE_PROCESSES=()  # Reset for new wave
+      WAVE_PROCESSES=()
     fi
 
     CURRENT_WAVE="$WAVE"
     log "🚀 Starting WAVE $CURRENT_WAVE..."
   fi
 
-  # Run each deployment's steps in the background
   (
     scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$INCREMENT" "$PAUSE"
     wait_for_deployment_ready "$DEPLOYMENT"
-    poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$ENDPOINT" "$PORT" "$INCREMENT" "$PAUSE" "$VALIDATION_STRING"
+    poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$ENDPOINT" "$PORT" "$INCREMENT" "$PAUSE" "$VALIDATION_STRING" "$WAIT_BEFORE_POLL" "$RETRY_DELAY" "$MAX_RETRIES"
   ) &
 
-  WAVE_PROCESSES+=($!)  # Store process ID
+  WAVE_PROCESSES+=($!)
 done
 
-# Ensure last wave completes before exiting
-if [[ ${#WAVE_PROCESSES[@]} -gt 0 ]]; then
-  log "⌛ Waiting for all deployments in Wave $CURRENT_WAVE to finish..."
-  wait "${WAVE_PROCESSES[@]}"
-  log "✅ All deployments in Wave $CURRENT_WAVE completed!"
-fi
-
-log "🎉 ✅ All waves completed successfully!"
+wait "${WAVE_PROCESSES[@]}"
+log "✅ All waves completed successfully!"
