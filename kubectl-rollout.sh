@@ -46,6 +46,9 @@ poll_pods_http() {
 
   log "Polling pods for $DEPLOYMENT_NAME (Validation: '$VALIDATION_STRING') on port $PORT..."
 
+  # Strip surrounding single quotes if present
+  VALIDATION_STRING=$(echo "$VALIDATION_STRING" | sed "s/^'//;s/'$//")
+
   # Fetch all pod names and IPs in a single kubectl call and store them in an associative array
   declare -A POD_IP_MAP
   while IFS=' ' read -r POD_NAME POD_IP; do
@@ -67,7 +70,7 @@ poll_pods_http() {
       
       RESPONSE=$(curl --max-time 10 -s "$URL" || echo "ERROR")
 
-      # Fix: Use grep instead of Bash regex matching
+      # Fix: Use grep with stripped validation string
       if echo "$RESPONSE" | grep -q "$VALIDATION_STRING"; then
         log "Pod $POD_NAME ($POD_IP) is ready!"
       else
