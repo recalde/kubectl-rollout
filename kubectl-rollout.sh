@@ -91,27 +91,48 @@ poll_pods_http() {
   log "WARNING: Some pods did not become ready: ${NEXT_ROUND[*]}"
 }
 
-# Define deployments (format: "DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING")
+### **🛠 Common Configuration for Deployments**
+APP_INSTANCE="app-instance"
+DEPLOYMENT_NAMES=("deploy1" "deploy2" "deploy3")
+DEPLOYMENT_SELECTORS=("deploy1" "deploy2" "deploy3")
+COMMON_HTTP_ENDPOINT="/api/v1/readiness"
+COMMON_DELAY="30s"
+COMMON_VALIDATION_STRING='{"ClusterSize":4}'
+
+# Define deployments (format: "WAVE DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING")
 DEPLOYMENTS=(
-  "deploy1 app-instance deploy1 10 /api/v1/readiness 8080 2 30s '{\"ClusterSize\":4}'"
-  "deploy2 app-instance deploy2 5 /ready 9090 3 20s '{\"ready\":true}'"
-  "deploy3 app-instance deploy3 15 /status 8000 2 40s '{\"service-ok\":\"yes\"}'"
+  "1 ${DEPLOYMENT_NAMES[0]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[0]} 10 $COMMON_HTTP_ENDPOINT 8080 2 $COMMON_DELAY '$COMMON_VALIDATION_STRING'"
+  "1 ${DEPLOYMENT_NAMES[1]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[1]} 5 $COMMON_HTTP_ENDPOINT 9090 3 $COMMON_DELAY '$COMMON_VALIDATION_STRING'"
+  "2 ${DEPLOYMENT_NAMES[2]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[2]} 15 $COMMON_HTTP_ENDPOINT 8000 2 $COMMON_DELAY '$COMMON_VALIDATION_STRING'"
 )
 
-# **Step 1: Scale Deployments**
+### **🚀 Execute Deployment in Waves**
+CURRENT_WAVE=""
+WAVE_PROCESSES=()
+
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
-  read -r DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
-  scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$INCREMENT" "$PAUSE"
+  read -r WAVE DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
+
+  if [[ "$CURRENT_WAVE" != "$WAVE" ]]; then
+    # If a new wave is starting, wait for the previous wave to complete
+    if [[ -n "$CURRENT_WAVE" ]]; then
+      log "✅ All deployments in Wave $CURRENT_WAVE completed! Moving to Wave $WAVE..."
+      wait  # Ensure all background jobs from the previous wave finish
+    fi
+    CURRENT_WAVE="$WAVE"
+    log "🚀 Starting WAVE $CURRENT_WAVE..."
+  fi
+
+  # Run each deployment's steps in the background
+  (
+    scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$INCREMENT" "$PAUSE"
+    wait_for_deployment_ready "$DEPLOYMENT"
+    poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$ENDPOINT" "$PORT" "$INCREMENT" "$PAUSE" "$VALIDATION_STRING"
+  ) &
+
+  WAVE_PROCESSES+=($!)  # Store process ID
 done
 
-# **Step 2: Wait for Deployments to be Ready**
-for APP_DATA in "${DEPLOYMENTS[@]}"; do
-  read -r DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
-  wait_for_deployment_ready "$DEPLOYMENT"
-done
-
-# **Step 3: Poll Pods for Readiness**
-for APP_DATA in "${DEPLOYMENTS[@]}"; do
-  read -r DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
-  poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$ENDPOINT" "$PORT" "$INCREMENT" "$PAUSE" "$VALIDATION_STRING"
-done
+# Wait for last wave's processes to finish
+wait
+log "✅ All waves completed successfully!"
