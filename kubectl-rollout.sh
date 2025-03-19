@@ -101,14 +101,13 @@ poll_pods_http() {
 }
 
 ### **🛠 Deployment Configuration**
+declare -A WAVES
+
 DEPLOYMENTS=(
   "1 deploy1 deploy1 10 30 2 15 /api/v1/readiness 8080 '{\"ClusterSize\":4}' 10 5"
   "1 deploy2 deploy2 5 20 3 20 /api/v1/readiness 9090 '{\"ClusterSize\":4}' 15 6"
   "2 deploy3 deploy3 15 40 2 30 /api/v1/readiness 8000 '{\"ClusterSize\":4}' 20 7"
 )
-
-### **🚀 Execute Deployment in Waves**
-declare -A WAVES
 
 # Group deployments by wave
 for ENTRY in "${DEPLOYMENTS[@]}"; do
@@ -116,8 +115,11 @@ for ENTRY in "${DEPLOYMENTS[@]}"; do
   WAVES["$WAVE"]+="$ENTRY"$'\n'
 done
 
+# Extract unique waves properly
+WAVE_LIST=($(printf "%s\n" "${!WAVES[@]}" | sort -n))
+
 # Process each wave
-for WAVE in "${!WAVES[@]}"; do
+for WAVE in "${WAVE_LIST[@]}"; do
   log "🚀 Starting WAVE $WAVE..."
 
   # First, scale all deployments in the wave
