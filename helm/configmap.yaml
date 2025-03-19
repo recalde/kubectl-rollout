@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-scaler-config
+data:
+  deployments.yaml: |
+    {{- if .Values.podScaler.enabled }}
+    deployments:
+    {{- range .Values.podScaler.deployments }}
+      - name: "{{ .name }}"
+        initialReplicas: {{ .initialReplicas }}
+        maxReplicas: {{ .maxReplicas }}
+        scaleStep: {{ .scaleStep }}
+        scaleInterval: "{{ .scaleInterval }}"
+        wave: {{ .wave }}
+        validation:
+          type: "{{ .validation.type }}"
+          url: "{{ .validation.url }}"
+          method: "{{ .validation.method }}"
+          {{- if .validation.validationDelay }}
+          validationDelay: "{{ .validation.validationDelay }}"
+          {{- end }}
+          {{- if .validation.body }}
+          body: '{{ .validation.body }}'
+          {{- end }}
+          {{- if .validation.headers }}
+          headers:
+            {{- range $key, $value := .validation.headers }}
+            {{ $key }}: "{{ $value }}"
+            {{- end }}
+          {{- end }}
+          check:
+            field: "{{ .validation.check.field }}"
+            condition: "{{ .validation.check.condition }}"
+            value: {{ .validation.check.value }}
+    {{- end }}
+    {{- end }}
