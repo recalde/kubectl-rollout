@@ -56,7 +56,7 @@ poll_pods_http() {
   local INSTANCE=$1 DEPLOYMENT=$2 SELECTOR=$3 TARGET_REPLICAS=$4 WAIT_BEFORE_POLL=$5 HTTP_ENDPOINT=$6 HTTP_PORT=$7 VALIDATION_STRING=$8 RETRY_DELAY=$9 MAX_RETRIES=${10}
   
   log "⌛ Waiting $WAIT_BEFORE_POLL before polling pods for $DEPLOYMENT..."
-  sleep "${WAIT_BEFORE_POLL%s}"
+  sleep "$(echo "$WAIT_BEFORE_POLL" | sed 's/[a-zA-Z]//g')"  # Fixed sleep issue
 
   log "Polling pods for $DEPLOYMENT (Validation: '$VALIDATION_STRING') on port $HTTP_PORT..."
 
@@ -96,7 +96,7 @@ poll_pods_http() {
     fi
 
     log "🔄 Retrying ${#NEXT_ROUND[@]} failed pods in $RETRY_DELAY..."
-    sleep "${RETRY_DELAY%s}"
+    sleep "$(echo "$RETRY_DELAY" | sed 's/[a-zA-Z]//g')"  # Fixed sleep issue
   done
 
   log "⚠️ WARNING: Some pods did not become ready: ${NEXT_ROUND[*]}"
