@@ -115,32 +115,38 @@ for ENTRY in "${DEPLOYMENTS[@]}"; do
   WAVES["$WAVE"]+="$ENTRY"$'\n'
 done
 
-# Extract unique waves properly
+# Extract unique wave numbers properly
 WAVE_LIST=($(printf "%s\n" "${!WAVES[@]}" | sort -n))
 
 # Process each wave
 for WAVE in "${WAVE_LIST[@]}"; do
   log "🚀 Starting WAVE $WAVE..."
 
+  # Ensure WAVES entry exists before processing
+  if [[ -z "${WAVES[$WAVE]}" ]]; then
+    log "⚠️ WARNING: No deployments found for WAVE $WAVE"
+    continue
+  fi
+
   # First, scale all deployments in the wave
   while IFS= read -r LINE; do
-    [[ -n "$LINE" ]] || continue
+    [[ -z "$LINE" ]] && continue
     read -r _ DEPLOYMENT _ TARGET_REPLICAS SCALE_DELAY SCALE_INCREMENT _ _ _ _ _ _ <<< "$LINE"
-    [[ -n "$DEPLOYMENT" ]] && scale_deployment "$DEPLOYMENT" "$TARGET_REPLICAS" "$SCALE_DELAY" "$SCALE_INCREMENT"
+    scale_deployment "$DEPLOYMENT" "$TARGET_REPLICAS" "$SCALE_DELAY" "$SCALE_INCREMENT"
   done <<< "${WAVES[$WAVE]}"
 
   # Wait for all deployments in the wave to be ready
   while IFS= read -r LINE; do
-    [[ -n "$LINE" ]] || continue
+    [[ -z "$LINE" ]] && continue
     read -r _ DEPLOYMENT _ _ _ _ _ _ _ _ _ _ <<< "$LINE"
-    [[ -n "$DEPLOYMENT" ]] && wait_for_deployment_ready "$DEPLOYMENT"
+    wait_for_deployment_ready "$DEPLOYMENT"
   done <<< "${WAVES[$WAVE]}"
 
   # Poll all deployments in the wave for readiness
   while IFS= read -r LINE; do
-    [[ -n "$LINE" ]] || continue
+    [[ -z "$LINE" ]] && continue
     read -r _ DEPLOYMENT SELECTOR TARGET_REPLICAS _ _ WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$LINE"
-    [[ -n "$DEPLOYMENT" ]] && poll_pods_http "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$WAIT_BEFORE_POLL" "$HTTP_ENDPOINT" "$HTTP_PORT" "$VALIDATION_STRING" "$RETRY_DELAY" "$MAX_RETRIES"
+    poll_pods_http "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$WAIT_BEFORE_POLL" "$HTTP_ENDPOINT" "$HTTP_PORT" "$VALIDATION_STRING" "$RETRY_DELAY" "$MAX_RETRIES"
   done <<< "${WAVES[$WAVE]}"
 
   log "✅ All deployments in WAVE $WAVE are fully ready!"
