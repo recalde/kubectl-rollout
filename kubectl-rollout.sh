@@ -101,11 +101,11 @@ poll_pods_http() {
 }
 
 ### **🛠 Deployment Configuration**
-readarray -t DEPLOYMENTS <<EOF
-1 deploy1 deploy1 10 30 2 15 /api/v1/readiness 8080 '{"ClusterSize":4}' 10 5
-1 deploy2 deploy2 5 20 3 20 /api/v1/readiness 9090 '{"ClusterSize":4}' 15 6
-2 deploy3 deploy3 15 40 2 30 /api/v1/readiness 8000 '{"ClusterSize":4}' 20 7
-EOF
+DEPLOYMENTS=(
+  "1 deploy1 deploy1 10 30 2 15 /api/v1/readiness 8080 '{\"ClusterSize\":4}' 10 5"
+  "1 deploy2 deploy2 5 20 3 20 /api/v1/readiness 9090 '{\"ClusterSize\":4}' 15 6"
+  "2 deploy3 deploy3 15 40 2 30 /api/v1/readiness 8000 '{\"ClusterSize\":4}' 20 7"
+)
 
 ### **🚀 Execute Deployment in Waves**
 declare -A WAVES
@@ -122,20 +122,20 @@ for WAVE in "${!WAVES[@]}"; do
 
   # First, scale all deployments in the wave
   while IFS= read -r LINE; do
-    read -r _ DEPLOYMENT _ TARGET_REPLICAS SCALE_DELAY SCALE_INCREMENT _ _ _ _ _ _ <<< "$LINE"
-    scale_deployment "$DEPLOYMENT" "$TARGET_REPLICAS" "$SCALE_DELAY" "$SCALE_INCREMENT"
+    read -r WAVE DEPLOYMENT SELECTOR TARGET_REPLICAS SCALE_DELAY SCALE_INCREMENT WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$LINE"
+    [[ -n "$DEPLOYMENT" ]] && scale_deployment "$DEPLOYMENT" "$TARGET_REPLICAS" "$SCALE_DELAY" "$SCALE_INCREMENT"
   done <<< "${WAVES[$WAVE]}"
 
   # Wait for all deployments in the wave to be ready
   while IFS= read -r LINE; do
-    read -r _ DEPLOYMENT _ _ _ _ _ _ _ _ _ _ <<< "$LINE"
-    wait_for_deployment_ready "$DEPLOYMENT"
+    read -r WAVE DEPLOYMENT _ _ _ _ _ _ _ _ _ <<< "$LINE"
+    [[ -n "$DEPLOYMENT" ]] && wait_for_deployment_ready "$DEPLOYMENT"
   done <<< "${WAVES[$WAVE]}"
 
   # Poll all deployments in the wave for readiness
   while IFS= read -r LINE; do
-    read -r _ DEPLOYMENT SELECTOR TARGET_REPLICAS _ _ WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$LINE"
-    poll_pods_http "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$WAIT_BEFORE_POLL" "$HTTP_ENDPOINT" "$HTTP_PORT" "$VALIDATION_STRING" "$RETRY_DELAY" "$MAX_RETRIES"
+    read -r WAVE DEPLOYMENT SELECTOR TARGET_REPLICAS _ _ WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$LINE"
+    [[ -n "$DEPLOYMENT" ]] && poll_pods_http "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$WAIT_BEFORE_POLL" "$HTTP_ENDPOINT" "$HTTP_PORT" "$VALIDATION_STRING" "$RETRY_DELAY" "$MAX_RETRIES"
   done <<< "${WAVES[$WAVE]}"
 
   log "✅ All deployments in WAVE $WAVE are fully ready!"
