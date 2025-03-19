@@ -5,7 +5,6 @@ set -e  # Exit on any error
 # Record script start time
 START_TIME=$(date +%s)
 
-# Function to log messages with elapsed time
 log() {
   local CURRENT_TIME=$(date +%s)
   local ELAPSED=$((CURRENT_TIME - START_TIME))
@@ -14,7 +13,6 @@ log() {
   printf "[%02d:%02d] %s\n" "$MINUTES" "$SECONDS" "$1"
 }
 
-# Scale a Kubernetes deployment incrementally
 scale_deployment() {
   local DEPLOYMENT=$1 TARGET_REPLICAS=$2 SCALE_DELAY=$3 SCALE_INCREMENT=$4
   log "Starting rollout for $DEPLOYMENT (Target: $TARGET_REPLICAS, Increment: $SCALE_INCREMENT, Pause: $SCALE_DELAY sec)"
@@ -44,7 +42,6 @@ scale_deployment() {
   log "✅ Scaling complete for $DEPLOYMENT."
 }
 
-# Wait for a deployment to be fully ready
 wait_for_deployment_ready() {
   local DEPLOYMENT=$1
   log "Waiting for $DEPLOYMENT to be fully rolled out..."
@@ -55,7 +52,6 @@ wait_for_deployment_ready() {
   log "✅ Deployment $DEPLOYMENT is fully rolled out."
 }
 
-# Poll pods for HTTP readiness
 poll_pods_http() {
   local DEPLOYMENT=$1 SELECTOR=$2 TARGET_REPLICAS=$3 WAIT_BEFORE_POLL=$4 HTTP_ENDPOINT=$5 HTTP_PORT=$6 VALIDATION_STRING=$7 RETRY_DELAY=$8 MAX_RETRIES=$9
 
@@ -106,32 +102,40 @@ poll_pods_http() {
 
 ### **🛠 Deployment Configuration**
 DEPLOYMENTS=(
-  # WAVE  DEPLOYMENT  SELECTOR  TARGET_REPLICAS  SCALE_DELAY  SCALE_INCREMENT  WAIT_BEFORE_POLL  HTTP_ENDPOINT        HTTP_PORT  VALIDATION_STRING       RETRY_DELAY  MAX_RETRIES
-  "1      deploy1     deploy1   10              30           2                15                /api/v1/readiness    8080       '{\"ClusterSize\":4}'   10          5"
-  "1      deploy2     deploy2   5               20           3                20                /api/v1/readiness    9090       '{\"ClusterSize\":4}'   15          6"
-  "2      deploy3     deploy3   15              40           2                30                /api/v1/readiness    8000       '{\"ClusterSize\":4}'   20          7"
+  "1 deploy1 deploy1 10 30 2 15 /api/v1/readiness 8080 '{\"ClusterSize\":4}' 10 5"
+  "1 deploy2 deploy2 5 20 3 20 /api/v1/readiness 9090 '{\"ClusterSize\":4}' 15 6"
+  "2 deploy3 deploy3 15 40 2 30 /api/v1/readiness 8000 '{\"ClusterSize\":4}' 20 7"
 )
 
 ### **🚀 Execute Deployment in Waves**
-for WAVE in $(awk '{print $1}' <<< "${DEPLOYMENTS[@]}" | sort -u); do
-  WAVE_DEPLOYMENTS=($(grep "^$WAVE " <<< "${DEPLOYMENTS[@]}"))
+declare -A WAVES
 
+# Group deployments by wave
+for ENTRY in "${DEPLOYMENTS[@]}"; do
+  WAVES["$(echo "$ENTRY" | cut -d' ' -f1)"]+="$ENTRY"$'\n'
+done
+
+# Process each wave
+for WAVE in "${!WAVES[@]}"; do
   log "🚀 Starting WAVE $WAVE..."
 
   # First, scale all deployments in the wave
-  for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
-    scale_deployment $(awk '{print $2, $4, $5, $6}' <<< "$APP_DATA")
-  done
+  while IFS= read -r LINE; do
+    IFS=' ' read -r _ DEPLOYMENT _ TARGET_REPLICAS SCALE_DELAY SCALE_INCREMENT _ _ _ _ _ _ <<< "$LINE"
+    scale_deployment "$DEPLOYMENT" "$TARGET_REPLICAS" "$SCALE_DELAY" "$SCALE_INCREMENT"
+  done <<< "${WAVES[$WAVE]}"
 
   # Wait for all deployments in the wave to be ready
-  for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
-    wait_for_deployment_ready $(awk '{print $2}' <<< "$APP_DATA")
-  done
+  while IFS= read -r LINE; do
+    IFS=' ' read -r _ DEPLOYMENT _ _ _ _ _ _ _ _ _ _ <<< "$LINE"
+    wait_for_deployment_ready "$DEPLOYMENT"
+  done <<< "${WAVES[$WAVE]}"
 
   # Poll all deployments in the wave for readiness
-  for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
-    poll_pods_http $(awk '{print $2, $3, $4, $7, $8, $9, $10, $11, $12}' <<< "$APP_DATA")
-  done
+  while IFS= read -r LINE; do
+    IFS=' ' read -r _ DEPLOYMENT SELECTOR TARGET_REPLICAS _ _ WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$LINE"
+    poll_pods_http "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$WAIT_BEFORE_POLL" "$HTTP_ENDPOINT" "$HTTP_PORT" "$VALIDATION_STRING" "$RETRY_DELAY" "$MAX_RETRIES"
+  done <<< "${WAVES[$WAVE]}"
 
   log "✅ All deployments in WAVE $WAVE are fully ready!"
 done
