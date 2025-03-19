@@ -125,33 +125,16 @@ DEPLOYMENTS=(
 )
 
 ### **🚀 Execute Deployment in Waves**
-CURRENT_WAVE=""
-WAVE_DEPLOYMENTS=()
-WAVE_PROCESSES=()
+for WAVE in $(cut -d ' ' -f 1 <<< "${DEPLOYMENTS[@]}" | sort -u); do
+  WAVE_DEPLOYMENTS=($(grep "^$WAVE " <<< "${DEPLOYMENTS[@]}"))
 
-for APP_DATA in "${DEPLOYMENTS[@]}"; do
-  read -r WAVE INSTANCE DEPLOYMENT SELECTOR TARGET_REPLICAS SCALE_DELAY SCALE_INCREMENT WAIT_BEFORE_POLL HTTP_ENDPOINT HTTP_PORT VALIDATION_STRING RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
+  log "🚀 Starting WAVE $WAVE..."
 
-  if [[ "$CURRENT_WAVE" != "$WAVE" ]]; then
-    [[ -n "$CURRENT_WAVE" ]] && wait "${WAVE_PROCESSES[@]}" && log "✅ All deployments in Wave $CURRENT_WAVE are fully ready!"
-    CURRENT_WAVE="$WAVE"
-    log "🚀 Starting WAVE $CURRENT_WAVE..."
-    WAVE_PROCESSES=()
-    WAVE_DEPLOYMENTS=()
-  fi
+  for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
+    poll_pods_http "$APP_DATA"
+  done
 
-  ( scale_deployment "$INSTANCE" "$DEPLOYMENT" "$SELECTOR" "$TARGET_REPLICAS" "$SCALE_DELAY" "$SCALE_INCREMENT"
-    wait_for_deployment_ready "$DEPLOYMENT" ) &
-
-  WAVE_PROCESSES+=($!)
-  WAVE_DEPLOYMENTS+=("$APP_DATA")
-done
-
-wait "${WAVE_PROCESSES[@]}"
-log "✅ All deployments in Wave $CURRENT_WAVE are fully ready!"
-
-for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
-  poll_pods_http "$APP_DATA"
+  log "✅ All deployments in WAVE $WAVE are fully ready!"
 done
 
 log "🎉 ✅ All waves completed successfully!"
