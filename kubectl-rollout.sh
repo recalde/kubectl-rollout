@@ -126,23 +126,33 @@ for APP_DATA in "${DEPLOYMENTS[@]}"; do
   read -r WAVE DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING <<< "$APP_DATA"
 
   if [[ "$CURRENT_WAVE" != "$WAVE" ]]; then
-    if [[ -n "$CURRENT_WAVE" ]]; then
-      log "✅ All deployments in Wave $CURRENT_WAVE completed! Moving to Wave $WAVE..."
-      wait "${WAVE_PROCESSES[@]}"
-      WAVE_PROCESSES=()
+    # Wait for all processes in the previous wave to complete before moving to next wave
+    if [[ -n "$CURRENT_WAVE" && ${#WAVE_PROCESSES[@]} -gt 0 ]]; then
+      log "⌛ Waiting for all deployments in Wave $CURRENT_WAVE to finish..."
+      wait "${WAVE_PROCESSES[@]}"  # Ensure all background jobs from the previous wave finish
+      log "✅ All deployments in Wave $CURRENT_WAVE completed!"
+      WAVE_PROCESSES=()  # Reset for new wave
     fi
+
     CURRENT_WAVE="$WAVE"
     log "🚀 Starting WAVE $CURRENT_WAVE..."
   fi
 
+  # Run each deployment's steps in the background
   (
     scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$INCREMENT" "$PAUSE"
     wait_for_deployment_ready "$DEPLOYMENT"
     poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$ENDPOINT" "$PORT" "$INCREMENT" "$PAUSE" "$VALIDATION_STRING"
   ) &
 
-  WAVE_PROCESSES+=($!)
+  WAVE_PROCESSES+=($!)  # Store process ID
 done
 
-wait "${WAVE_PROCESSES[@]}"
-log "✅ All waves completed successfully!"
+# Ensure last wave completes before exiting
+if [[ ${#WAVE_PROCESSES[@]} -gt 0 ]]; then
+  log "⌛ Waiting for all deployments in Wave $CURRENT_WAVE to finish..."
+  wait "${WAVE_PROCESSES[@]}"
+  log "✅ All deployments in Wave $CURRENT_WAVE completed!"
+fi
+
+log "🎉 ✅ All waves completed successfully!"
