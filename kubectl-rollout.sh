@@ -35,8 +35,9 @@ poll_pods_http() {
     log "Polling pods for $DEPLOYMENT_NAME (Expected size: $EXPECTED_SIZE)..."
 
     local PODS
-    PODS=($(kubectl get pods -l app="$DEPLOYMENT_NAME" -o=jsonpath='{.items[*].status.podIP}'))
-    [[ ${#PODS[@]} -eq 0 ]] && log "ERROR: No pods found for $DEPLOYMENT_NAME." && return 1
+    PODS=($(kubectl get pods --field-selector=status.phase=Running -o=jsonpath="{.items[?(@.metadata.ownerReferences[0].name=='$DEPLOYMENT_NAME')].status.podIP}"))
+
+    [[ ${#PODS[@]} -eq 0 ]] && log "ERROR: No running pods found for $DEPLOYMENT_NAME." && return 1
 
     for (( RETRIES=0; RETRIES < MAX_RETRIES && ${#PODS[@]} > 0; RETRIES++ )); do
         local NEXT_ROUND=()
