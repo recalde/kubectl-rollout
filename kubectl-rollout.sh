@@ -2,10 +2,8 @@
 
 set -e  # Exit on any error
 
-# Record script start time
 START_TIME=$(date +%s)
 
-# Function to log messages with elapsed time
 log() {
   local CURRENT_TIME=$(date +%s)
   local ELAPSED=$((CURRENT_TIME - START_TIME))
@@ -15,7 +13,7 @@ log() {
 }
 
 scale_deployment() {
-  local INSTANCE=$1 DEPLOYMENT=$2 SELECTOR=$3 TARGET_REPLICAS=$4 SCALE_DELAY=$5 SCALE_INCREMENT=$6
+  local INSTANCE=$1 DEPLOYMENT=$2 TARGET_REPLICAS=$3 SCALE_DELAY=$4 SCALE_INCREMENT=$5
   log "Starting rollout for $DEPLOYMENT (Target: $TARGET_REPLICAS, Increment: $SCALE_INCREMENT, Pause: $SCALE_DELAY sec)"
 
   local CURRENT_REPLICAS
@@ -44,23 +42,22 @@ scale_deployment() {
 }
 
 wait_for_deployment_ready() {
-  log "Waiting for $1 to be fully rolled out..."
-  if ! kubectl rollout status deployment "$1" 2>/dev/null; then
-    log "❌ ERROR: Deployment $1 failed to become ready."
+  local DEPLOYMENT=$1
+  log "Waiting for $DEPLOYMENT to be fully rolled out..."
+  if ! kubectl rollout status deployment "$DEPLOYMENT" 2>/dev/null; then
+    log "❌ ERROR: Deployment $DEPLOYMENT failed to become ready."
     return 1
   fi
-  log "✅ Deployment $1 is fully rolled out."
+  log "✅ Deployment $DEPLOYMENT is fully rolled out."
 }
 
 poll_pods_http() {
   local INSTANCE=$1 DEPLOYMENT=$2 SELECTOR=$3 TARGET_REPLICAS=$4 WAIT_BEFORE_POLL=$5 HTTP_ENDPOINT=$6 HTTP_PORT=$7 VALIDATION_STRING=$8 RETRY_DELAY=$9 MAX_RETRIES=${10}
-  
+
   log "⌛ Waiting $WAIT_BEFORE_POLL sec before polling pods for $DEPLOYMENT..."
   sleep "$WAIT_BEFORE_POLL"
 
   log "Polling pods for $DEPLOYMENT (Validation: '$VALIDATION_STRING') on port $HTTP_PORT..."
-
-  VALIDATION_STRING=$(echo "$VALIDATION_STRING" | sed "s/^'//;s/'$//")  # Strip surrounding single quotes
 
   declare -A POD_IP_MAP
   while IFS=' ' read -r POD_NAME POD_IP; do
@@ -103,35 +100,32 @@ poll_pods_http() {
 }
 
 ### **🛠 Deployment Configuration**
-# Base Configuration (All values in **seconds**)
 APP_INSTANCE="app-instance"
-DEPLOYMENT_NAMES=("deploy1" "deploy2" "deploy3")
-DEPLOYMENT_SELECTORS=("deploy1" "deploy2" "deploy3")
-DESIRED_REPLICAS=(10 5 15)
-SCALE_DELAY=(30 20 40)
-SCALE_INCREMENT=(2 3 2)
-WAIT_BEFORE_POLL=(15 20 30)
-HTTP_ENDPOINT="/api/v1/readiness"
-HTTP_PORT=(8080 9090 8000)
-VALIDATION_STRING='{"ClusterSize":4}'
-RETRY_DELAY=(10 15 20)
-MAX_RETRIES=(5 6 7)
-
-# Define deployment waves
 DEPLOYMENTS=(
-  "1 $APP_INSTANCE ${DEPLOYMENT_NAMES[0]} ${DEPLOYMENT_SELECTORS[0]} ${DESIRED_REPLICAS[0]} ${SCALE_DELAY[0]} ${SCALE_INCREMENT[0]} ${WAIT_BEFORE_POLL[0]} $HTTP_ENDPOINT ${HTTP_PORT[0]} '$VALIDATION_STRING' ${RETRY_DELAY[0]} ${MAX_RETRIES[0]}"
-  "1 $APP_INSTANCE ${DEPLOYMENT_NAMES[1]} ${DEPLOYMENT_SELECTORS[1]} ${DESIRED_REPLICAS[1]} ${SCALE_DELAY[1]} ${SCALE_INCREMENT[1]} ${WAIT_BEFORE_POLL[1]} $HTTP_ENDPOINT ${HTTP_PORT[1]} '$VALIDATION_STRING' ${RETRY_DELAY[1]} ${MAX_RETRIES[1]}"
-  "2 $APP_INSTANCE ${DEPLOYMENT_NAMES[2]} ${DEPLOYMENT_SELECTORS[2]} ${DESIRED_REPLICAS[2]} ${SCALE_DELAY[2]} ${SCALE_INCREMENT[2]} ${WAIT_BEFORE_POLL[2]} $HTTP_ENDPOINT ${HTTP_PORT[2]} '$VALIDATION_STRING' ${RETRY_DELAY[2]} ${MAX_RETRIES[2]}"
+  "1 deploy1 deploy1 10 30 2 15 /api/v1/readiness 8080 '{\"ClusterSize\":4}' 10 5"
+  "1 deploy2 deploy2 5 20 3 20 /api/v1/readiness 9090 '{\"ClusterSize\":4}' 15 6"
+  "2 deploy3 deploy3 15 40 2 30 /api/v1/readiness 8000 '{\"ClusterSize\":4}' 20 7"
 )
 
 ### **🚀 Execute Deployment in Waves**
-for WAVE in $(cut -d ' ' -f 1 <<< "${DEPLOYMENTS[@]}" | sort -u); do
+for WAVE in $(awk '{print $1}' <<< "${DEPLOYMENTS[@]}" | sort -u); do
   WAVE_DEPLOYMENTS=($(grep "^$WAVE " <<< "${DEPLOYMENTS[@]}"))
 
   log "🚀 Starting WAVE $WAVE..."
 
+  # First, scale all deployments in the wave
   for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
-    poll_pods_http "$APP_DATA"
+    scale_deployment $(awk '{print $2, $3, $4, $5, $6}' <<< "$APP_DATA")
+  done
+
+  # Wait for all deployments in the wave to be ready
+  for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
+    wait_for_deployment_ready $(awk '{print $2}' <<< "$APP_DATA")
+  done
+
+  # Poll all deployments in the wave for readiness
+  for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
+    poll_pods_http $(awk '{print $2, $3, $4, $7, $8, $9, $10, $11, $12}' <<< "$APP_DATA")
   done
 
   log "✅ All deployments in WAVE $WAVE are fully ready!"
