@@ -2,73 +2,70 @@
 
 set -e  # Exit on any error
 
-# Function to perform incremental rollout for a deployment
+log() { echo "$(date +'%H:%M:%S') $1"; }
+
 scale_deployment() {
-    local DEPLOYMENT_NAME=$1
-    local TARGET_REPLICAS=$2
-    local INCREMENT=$3
-    local PAUSE=$4
+    local DEPLOYMENT_NAME=$1 TARGET_REPLICAS=$2 INCREMENT=$3 PAUSE=$4
+    log "Starting rollout for $DEPLOYMENT_NAME (Target: $TARGET_REPLICAS, Increment: $INCREMENT, Pause: $PAUSE)"
 
-    echo "$(date +'%H:%M:%S') Starting rollout for deployment: $DEPLOYMENT_NAME"
-
-    # Get the current replica count
+    local CURRENT_REPLICAS
     CURRENT_REPLICAS=$(kubectl get deployment "$DEPLOYMENT_NAME" -o=jsonpath='{.spec.replicas}')
     
-    if [[ -z "$CURRENT_REPLICAS" ]]; then
-        echo "$(date +'%H:%M:%S') ERROR: Could not retrieve current replica count for $DEPLOYMENT_NAME. Skipping..."
-        return 1
-    fi
+    [[ -z "$CURRENT_REPLICAS" ]] && log "ERROR: Could not retrieve replica count for $DEPLOYMENT_NAME." && return 1
 
-    echo "$(date +'%H:%M:%S') Current replicas: $CURRENT_REPLICAS"
-    echo "$(date +'%H:%M:%S') Target replicas: $TARGET_REPLICAS"
-    echo "$(date +'%H:%M:%S') Increment: $INCREMENT"
-    echo "$(date +'%H:%M:%S') Pause between increments: $PAUSE"
-
-    # Incrementally scale up
-    while [[ "$CURRENT_REPLICAS" -lt "$TARGET_REPLICAS" ]]; do
-        # Determine next scale value
-        NEW_REPLICAS=$((CURRENT_REPLICAS + INCREMENT))
-
-        # Ensure we do not exceed the target count
-        if [[ "$NEW_REPLICAS" -gt "$TARGET_REPLICAS" ]]; then
-            NEW_REPLICAS="$TARGET_REPLICAS"
-        fi
-
-        echo "$(date +'%H:%M:%S') Scaling deployment $DEPLOYMENT_NAME to $NEW_REPLICAS replicas..."
+    while (( CURRENT_REPLICAS < TARGET_REPLICAS )); do
+        local NEW_REPLICAS=$(( CURRENT_REPLICAS + INCREMENT > TARGET_REPLICAS ? TARGET_REPLICAS : CURRENT_REPLICAS + INCREMENT ))
+        log "Scaling $DEPLOYMENT_NAME to $NEW_REPLICAS replicas..."
         kubectl scale deployment "$DEPLOYMENT_NAME" --replicas="$NEW_REPLICAS"
-
-        # Only wait if there's another increment needed
-        if [[ "$NEW_REPLICAS" -lt "$TARGET_REPLICAS" ]]; then
-            echo "$(date +'%H:%M:%S') Waiting for $PAUSE before next increment..."
-            sleep "$PAUSE"
-        fi
-
-        # Update current replica count
-        CURRENT_REPLICAS="$NEW_REPLICAS"
+        (( NEW_REPLICAS < TARGET_REPLICAS )) && log "Waiting $PAUSE before next increment..." && sleep "$PAUSE"
+        CURRENT_REPLICAS=$NEW_REPLICAS
     done
 
-    echo "$(date +'%H:%M:%S') Scaling complete for $DEPLOYMENT_NAME."
+    log "Scaling complete for $DEPLOYMENT_NAME."
 }
 
-# Function to wait for deployment readiness
 wait_for_deployment_ready() {
-    local DEPLOYMENT_NAME=$1
-    echo "$(date +'%H:%M:%S') Waiting for all pods to be in a healthy state for $DEPLOYMENT_NAME..."
-    kubectl rollout status deployment "$DEPLOYMENT_NAME"
-    echo "$(date +'%H:%M:%S') Deployment is fully rolled out: $DEPLOYMENT_NAME."
+    log "Waiting for $1 to be fully rolled out..."
+    kubectl rollout status deployment "$1"
+    log "$1 is fully rolled out."
 }
 
-# Define rollout parameters
-ROLLOUT_REPLICA_COUNT=10
-ROLLOUT_INCREMENT=2
-ROLLOUT_PAUSE=30s
+poll_pods_http() {
+    local DEPLOYMENT_NAME=$1 ENDPOINT=$2 EXPECTED_SIZE=$3 RETRY_INTERVAL=5 MAX_RETRIES=5
+    log "Polling pods for $DEPLOYMENT_NAME (Expected size: $EXPECTED_SIZE)..."
 
-# Scale deployments first
-scale_deployment "app1" "$ROLLOUT_REPLICA_COUNT" "$ROLLOUT_INCREMENT" "$ROLLOUT_PAUSE"
-scale_deployment "app2" "$ROLLOUT_REPLICA_COUNT" "$ROLLOUT_INCREMENT" "$ROLLOUT_PAUSE"
-scale_deployment "app3" "$ROLLOUT_REPLICA_COUNT" "$ROLLOUT_INCREMENT" "$ROLLOUT_PAUSE"
+    local PODS
+    PODS=($(kubectl get pods -l app="$DEPLOYMENT_NAME" -o=jsonpath='{.items[*].status.podIP}'))
+    [[ ${#PODS[@]} -eq 0 ]] && log "ERROR: No pods found for $DEPLOYMENT_NAME." && return 1
 
-# Then wait for them to be fully ready
-wait_for_deployment_ready "app1"
-wait_for_deployment_ready "app2"
-wait_for_deployment_ready "app3"
+    for (( RETRIES=0; RETRIES < MAX_RETRIES && ${#PODS[@]} > 0; RETRIES++ )); do
+        local NEXT_ROUND=()
+        for POD_IP in "${PODS[@]}"; do
+            local URL="http://${POD_IP}${ENDPOINT}"
+            log "Checking $URL..."
+            RESPONSE=$(curl --max-time 10 -s "$URL" || echo "ERROR")
+            [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ "cluster-size: $EXPECTED_SIZE" ]] && NEXT_ROUND+=("$POD_IP") && continue
+            log "Pod $POD_IP is ready!"
+        done
+        PODS=("${NEXT_ROUND[@]}")
+        (( ${#PODS[@]} > 0 )) && log "Retrying ${#PODS[@]} failed pods in $RETRY_INTERVAL seconds..." && sleep $RETRY_INTERVAL
+    done
+
+    [[ ${#PODS[@]} -gt 0 ]] && log "WARNING: Some pods did not become ready: ${PODS[*]}" || log "All pods in $DEPLOYMENT_NAME are confirmed ready."
+}
+
+# Define deployments (format: "NAME EXPECTED_SIZE ENDPOINT INCREMENT PAUSE")
+DEPLOYMENTS=(
+    "app1 10 /health 2 30s"
+    "app2 5 /ready 3 20s"
+    "app3 15 /status 2 40s"
+)
+
+# **Step 1: Scale Deployments**
+for APP_DATA in "${DEPLOYMENTS[@]}"; do scale_deployment $APP_DATA; done
+
+# **Step 2: Wait for Deployments to be Ready**
+for APP_DATA in "${DEPLOYMENTS[@]}"; do wait_for_deployment_ready $(echo $APP_DATA | cut -d' ' -f1); done
+
+# **Step 3: Poll Pods for Readiness**
+for APP_DATA in "${DEPLOYMENTS[@]}"; do poll_pods_http $APP_DATA; done
