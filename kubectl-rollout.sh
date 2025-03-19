@@ -60,10 +60,9 @@ poll_pods_http() {
 
   log "Polling pods for $DEPLOYMENT_NAME (Validation: '$VALIDATION_STRING') on port $PORT..."
 
-  # Strip surrounding single quotes if present
-  VALIDATION_STRING=$(echo "$VALIDATION_STRING" | sed "s/^'//;s/'$//")
+  VALIDATION_STRING=$(echo "$VALIDATION_STRING" | sed "s/^'//;s/'$//")  # Strip surrounding single quotes
 
-  # Fetch all pod names and IPs in a single kubectl call
+  # Fetch pod names and IPs
   declare -A POD_IP_MAP
   while IFS=' ' read -r POD_NAME POD_IP; do
     [[ -n "$POD_NAME" && -n "$POD_IP" ]] && POD_IP_MAP["$POD_NAME"]="$POD_IP"
@@ -104,53 +103,45 @@ poll_pods_http() {
   log "⚠️ WARNING: Some pods did not become ready: ${NEXT_ROUND[*]}"
 }
 
+### **🛠 Deployment Configuration**
+APP_INSTANCE="app-instance"
+DEPLOYMENT_NAMES=("deploy1" "deploy2" "deploy3")
+DEPLOYMENT_SELECTORS=("deploy1" "deploy2" "deploy3")
+HTTP_ENDPOINT="/api/v1/readiness"
+VALIDATION_STRING='{"ClusterSize":4}'
+DESIRED_REPLICAS=(10 5 15)
+PORT=(8080 9090 8000)
+DELAY=("30s" "20s" "40s")
+WAIT_BEFORE_POLL=("15s" "20s" "30s")
+RETRY_DELAY=("10s" "15s" "20s")
+MAX_RETRIES=(5 6 7)
+
+DEPLOYMENTS=(
+  "1 ${DEPLOYMENT_NAMES[0]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[0]} ${DESIRED_REPLICAS[0]} $HTTP_ENDPOINT ${PORT[0]} 2 ${DELAY[0]} '$VALIDATION_STRING' ${WAIT_BEFORE_POLL[0]} ${RETRY_DELAY[0]} ${MAX_RETRIES[0]}"
+  "1 ${DEPLOYMENT_NAMES[1]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[1]} ${DESIRED_REPLICAS[1]} $HTTP_ENDPOINT ${PORT[1]} 3 ${DELAY[1]} '$VALIDATION_STRING' ${WAIT_BEFORE_POLL[1]} ${RETRY_DELAY[1]} ${MAX_RETRIES[1]}"
+  "2 ${DEPLOYMENT_NAMES[2]} $APP_INSTANCE ${DEPLOYMENT_SELECTORS[2]} ${DESIRED_REPLICAS[2]} $HTTP_ENDPOINT ${PORT[2]} 2 ${DELAY[2]} '$VALIDATION_STRING' ${WAIT_BEFORE_POLL[2]} ${RETRY_DELAY[2]} ${MAX_RETRIES[2]}"
+)
+
 ### **🚀 Execute Deployment in Waves**
 CURRENT_WAVE=""
-WAVE_PROCESSES=()
 WAVE_DEPLOYMENTS=()
 
 for APP_DATA in "${DEPLOYMENTS[@]}"; do
   read -r WAVE DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING WAIT_BEFORE_POLL RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
 
   if [[ "$CURRENT_WAVE" != "$WAVE" ]]; then
-    if [[ -n "$CURRENT_WAVE" && ${#WAVE_PROCESSES[@]} -gt 0 ]]; then
-      log "⌛ Waiting for all deployments in Wave $CURRENT_WAVE to finish scaling..."
-      wait "${WAVE_PROCESSES[@]}"
-      log "✅ All deployments in Wave $CURRENT_WAVE have finished scaling!"
-      WAVE_PROCESSES=()
-    fi
-
+    [[ -n "$CURRENT_WAVE" ]] && log "✅ All deployments in Wave $CURRENT_WAVE completed!"
     CURRENT_WAVE="$WAVE"
     log "🚀 Starting WAVE $CURRENT_WAVE..."
   fi
 
-  # Start scaling in parallel
-  (
-    scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$INCREMENT" "$PAUSE"
-  ) &
-
-  WAVE_PROCESSES+=($!)  # Store process ID
-  WAVE_DEPLOYMENTS+=("$APP_DATA")  # Store the deployment details
+  scale_deployment "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$INCREMENT" "$PAUSE"
+  WAVE_DEPLOYMENTS+=("$APP_DATA")
 done
 
-# Ensure last wave scaling is complete
-if [[ ${#WAVE_PROCESSES[@]} -gt 0 ]]; then
-  log "⌛ Waiting for all deployments in Wave $CURRENT_WAVE to finish scaling..."
-  wait "${WAVE_PROCESSES[@]}"
-  log "✅ All deployments in Wave $CURRENT_WAVE have finished scaling!"
-fi
-
-# Now, wait for deployments to be ready, then poll pods
 for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
-  read -r WAVE DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING WAIT_BEFORE_POLL RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
-
+  read -r _ DEPLOYMENT _ _ _ _ _ _ _ WAIT_BEFORE_POLL RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
   wait_for_deployment_ready "$DEPLOYMENT"
-done
-
-# Now that all deployments are scaled and ready, start polling for readiness
-for APP_DATA in "${WAVE_DEPLOYMENTS[@]}"; do
-  read -r WAVE DEPLOYMENT INSTANCE NAME TARGET_REPLICAS ENDPOINT PORT INCREMENT PAUSE VALIDATION_STRING WAIT_BEFORE_POLL RETRY_DELAY MAX_RETRIES <<< "$APP_DATA"
-
   poll_pods_http "$DEPLOYMENT" "$INSTANCE" "$NAME" "$TARGET_REPLICAS" "$ENDPOINT" "$PORT" "$INCREMENT" "$PAUSE" "$VALIDATION_STRING" "$WAIT_BEFORE_POLL" "$RETRY_DELAY" "$MAX_RETRIES"
 done
 
