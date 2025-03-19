@@ -2,7 +2,17 @@
 
 set -e  # Exit on any error
 
-log() { echo "$(date +'%H:%M:%S') $1"; }
+# Record script start time
+START_TIME=$(date +%s)
+
+# Function to log messages with elapsed time
+log() {
+    local CURRENT_TIME=$(date +%s)
+    local ELAPSED=$((CURRENT_TIME - START_TIME))
+    local MINUTES=$((ELAPSED / 60))
+    local SECONDS=$((ELAPSED % 60))
+    printf "[%02d:%02d] %s\n" "$MINUTES" "$SECONDS" "$1"
+}
 
 scale_deployment() {
     local DEPLOYMENT_NAME=$1 TARGET_REPLICAS=$2 INCREMENT=$3 PAUSE=$4
@@ -34,19 +44,20 @@ poll_pods_http() {
     local DEPLOYMENT_NAME=$1 ENDPOINT=$2 EXPECTED_SIZE=$3 RETRY_INTERVAL=5 MAX_RETRIES=5
     log "Polling pods for $DEPLOYMENT_NAME (Expected size: $EXPECTED_SIZE)..."
 
-    local PODS
-    PODS=($(kubectl get pods --field-selector=status.phase=Running -o=jsonpath="{.items[?(@.metadata.ownerReferences[0].name=='$DEPLOYMENT_NAME')].status.podIP}"))
+    # Fetch pod names and IPs for this deployment
+    readarray -t PODS < <(kubectl get pods --field-selector=status.phase=Running -o=jsonpath="{range .items[?(@.metadata.ownerReferences[0].name=='$DEPLOYMENT_NAME')]}{.metadata.name} {.status.podIP}{"\n"}{end}")
 
     [[ ${#PODS[@]} -eq 0 ]] && log "ERROR: No running pods found for $DEPLOYMENT_NAME." && return 1
 
     for (( RETRIES=0; RETRIES < MAX_RETRIES && ${#PODS[@]} > 0; RETRIES++ )); do
         local NEXT_ROUND=()
-        for POD_IP in "${PODS[@]}"; do
+        for POD in "${PODS[@]}"; do
+            read -r POD_NAME POD_IP <<< "$POD"
             local URL="http://${POD_IP}${ENDPOINT}"
-            log "Checking $URL..."
+            log "Checking $URL for pod $POD_NAME..."
             RESPONSE=$(curl --max-time 10 -s "$URL" || echo "ERROR")
-            [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ "cluster-size: $EXPECTED_SIZE" ]] && NEXT_ROUND+=("$POD_IP") && continue
-            log "Pod $POD_IP is ready!"
+            [[ "$RESPONSE" == "ERROR" || ! "$RESPONSE" =~ "cluster-size: $EXPECTED_SIZE" ]] && NEXT_ROUND+=("$POD") && continue
+            log "Pod $POD_NAME ($POD_IP) is ready!"
         done
         PODS=("${NEXT_ROUND[@]}")
         (( ${#PODS[@]} > 0 )) && log "Retrying ${#PODS[@]} failed pods in $RETRY_INTERVAL seconds..." && sleep $RETRY_INTERVAL
