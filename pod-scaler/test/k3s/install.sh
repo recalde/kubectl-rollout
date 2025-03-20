@@ -12,25 +12,6 @@ function install_k3s() {
     local K3S_VERSION="v1.28.4+k3s1"
 
     echo "🚀 Installing k3s (lightweight Kubernetes with Traefik)..."
-    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=$K3S_VERSION sh -
-
-    echo "🌎 Setting up KUBECONFIG for current user..."
-    mkdir -p ~/.kube
-    sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-    sudo chown $(id -u):$(id -g) ~/.kube/config
-    export KUBECONFIG=~/.kube/config
-
-    echo "🔄 Waiting for k3s API server to be ready..."
-    ATTEMPTS=0
-    while ! kubectl version --short &>/dev/null; do
-        ((ATTEMPTS++))
-        if [[ $ATTEMPTS -gt 30 ]]; then
-            echo "❌ k3s did not start in time. Check 'sudo journalctl -u k3s' for logs."
-            exit 1
-        fi
-        echo "⏳ Waiting for k3s to become ready... (Attempt $ATTEMPTS/30)"
-        sleep 5
-    done
 
     echo "✅ k3s is ready!"
     kubectl get nodes || echo "⚠️ No nodes found (this is normal if the cluster is empty)."
