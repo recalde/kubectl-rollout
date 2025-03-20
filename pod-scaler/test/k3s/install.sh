@@ -22,7 +22,7 @@ function install_k3s() {
 
     echo "🔄 Waiting for k3s API server to be ready..."
     ATTEMPTS=0
-    while ! kubectl get nodes &>/dev/null; do
+    while ! kubectl version --short &>/dev/null; do
         ((ATTEMPTS++))
         if [[ $ATTEMPTS -gt 30 ]]; then
             echo "❌ k3s did not start in time. Check 'sudo journalctl -u k3s' for logs."
@@ -33,19 +33,15 @@ function install_k3s() {
     done
 
     echo "✅ k3s is ready!"
-    kubectl get nodes || echo "⚠️ No resources found (this is normal if cluster is empty)."
+    kubectl get nodes || echo "⚠️ No nodes found (this is normal if the cluster is empty)."
 }
 
-# Function to install kubectl (Fixed)
+# Function to install kubectl
 function install_kubectl() {
     echo "📦 Installing kubectl..."
-
-    # Use fixed command to get latest stable kubectl
     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-
     chmod +x kubectl
     sudo mv kubectl /usr/local/bin/
-
     echo "✅ kubectl installed!"
 }
 
