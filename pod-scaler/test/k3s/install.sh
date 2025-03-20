@@ -7,17 +7,6 @@ set -o pipefail  # Catch errors in piped commands
 NODE_HOSTNAME=$(hostname -I | awk '{print $1}')  # Get first non-loopback IP
 ARGOCD_NODEPORT=32080  # Fixed port for ArgoCD
 
-# Default installation options (1 = install, 0 = skip)
-INSTALL_DASHBOARD=1
-INSTALL_ARGOCD=1
-INSTALL_HELM=1
-INSTALL_ARGOCD_CLI=1
-INSTALL_K9S=1
-INSTALL_DOCKER_REGISTRY=1
-INSTALL_PROMETHEUS=1
-INSTALL_GRAFANA=1
-INSTALL_LOKI=1
-
 # Function to install k3s
 function install_k3s() {
     local K3S_VERSION="v1.28.4+k3s1"
@@ -44,23 +33,15 @@ function install_k3s() {
     done
 
     echo "✅ k3s is ready!"
-    kubectl get nodes
+    kubectl get nodes || echo "⚠️ No resources found (this is normal if cluster is empty)."
 }
 
-# Function to install kubectl
+# Function to install kubectl (Fixed)
 function install_kubectl() {
     echo "📦 Installing kubectl..."
 
-    # Fetch latest version, fallback to a known working version if empty
-    KUBECTL_VERSION=$(curl -s https://dl.k8s.io/release/stable.txt || echo "v1.28.0")
-
-    if [[ -z "$KUBECTL_VERSION" ]]; then
-        echo "⚠️ Failed to fetch latest kubectl version, using fallback version v1.28.0"
-        KUBECTL_VERSION="v1.28.0"
-    fi
-
-    echo "🔄 Downloading kubectl version: $KUBECTL_VERSION"
-    curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
+    # Use fixed command to get latest stable kubectl
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 
     chmod +x kubectl
     sudo mv kubectl /usr/local/bin/
@@ -75,13 +56,6 @@ function install_helm() {
     echo "✅ Helm installed!"
 }
 
-# Function to install Kubernetes Dashboard
-function install_kubernetes_dashboard() {
-    echo "📦 Installing Kubernetes Dashboard..."
-    kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
-    echo "✅ Kubernetes Dashboard installed!"
-}
-
 # Function to install Argo CD with a fixed NodePort
 function install_argocd() {
     echo "📦 Installing Argo CD..."
@@ -92,22 +66,6 @@ function install_argocd() {
     kubectl patch svc argocd-server -n argocd -p "{\"spec\": {\"type\": \"NodePort\", \"ports\": [{\"port\": 443, \"targetPort\": 8080, \"nodePort\": $ARGOCD_NODEPORT}]}}"
     
     echo "✅ Argo CD installed! Access it at: http://$NODE_HOSTNAME:$ARGOCD_NODEPORT"
-}
-
-# Function to install Argo CD CLI
-function install_argocd_cli() {
-    echo "📦 Installing Argo CD CLI..."
-    curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-    chmod +x argocd-linux-amd64
-    sudo mv argocd-linux-amd64 /usr/local/bin/argocd
-    echo "✅ Argo CD CLI installed!"
-}
-
-# Function to install k9s
-function install_k9s() {
-    echo "📦 Installing k9s..."
-    curl -sS https://webinstall.dev/k9s | bash
-    echo "✅ k9s installed!"
 }
 
 # Function to install Prometheus, Grafana, and Loki (Using Traefik)
@@ -131,10 +89,7 @@ function install_monitoring_stack() {
 install_k3s
 install_kubectl
 install_helm
-install_kubernetes_dashboard
 install_argocd
-install_argocd_cli
-install_k9s
 install_monitoring_stack
 
 echo "🎉 Installation complete! 🚀"
