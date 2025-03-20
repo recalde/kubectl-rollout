@@ -27,10 +27,19 @@ function install_k3s() {
     sudo chown $(id -u):$(id -g) ~/.kube/config
     export KUBECONFIG=~/.kube/config
 
-    echo "🔄 Waiting for k3s to be ready..."
-    sleep 10
+    echo "🔄 Waiting for k3s API server to be ready..."
+    ATTEMPTS=0
+    while ! kubectl get nodes &>/dev/null; do
+        ((ATTEMPTS++))
+        if [[ $ATTEMPTS -gt 20 ]]; then
+            echo "❌ k3s did not start in time. Check 'sudo journalctl -u k3s' for logs."
+            exit 1
+        fi
+        echo "⏳ Waiting for k3s to become ready... (Attempt $ATTEMPTS/20)"
+        sleep 5
+    done
 
-    echo "✅ Verifying k3s cluster..."
+    echo "✅ k3s is ready!"
     kubectl get nodes
 }
 
