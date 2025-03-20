@@ -35,11 +35,11 @@ function install_k3s() {
     ATTEMPTS=0
     while ! kubectl get nodes &>/dev/null; do
         ((ATTEMPTS++))
-        if [[ $ATTEMPTS -gt 20 ]]; then
+        if [[ $ATTEMPTS -gt 30 ]]; then
             echo "❌ k3s did not start in time. Check 'sudo journalctl -u k3s' for logs."
             exit 1
         fi
-        echo "⏳ Waiting for k3s to become ready... (Attempt $ATTEMPTS/20)"
+        echo "⏳ Waiting for k3s to become ready... (Attempt $ATTEMPTS/30)"
         sleep 5
     done
 
