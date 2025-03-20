@@ -3,6 +3,10 @@
 set -e  # Exit on any error
 set -o pipefail  # Catch errors in piped commands
 
+# Detect hostname or IP automatically
+NODE_HOSTNAME=$(hostname -I | awk '{print $1}')  # Get first non-loopback IP
+ARGOCD_NODEPORT=32080  # Fixed port for ArgoCD
+
 # Default installation options (1 = install, 0 = skip)
 INSTALL_DASHBOARD=1
 INSTALL_ARGOCD=1
@@ -66,12 +70,16 @@ function install_kubernetes_dashboard() {
     echo "✅ Kubernetes Dashboard installed!"
 }
 
-# Function to install Argo CD
+# Function to install Argo CD with a fixed NodePort
 function install_argocd() {
     echo "📦 Installing Argo CD..."
     kubectl create namespace argocd || true
     kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-    echo "✅ Argo CD installed!"
+
+    echo "🔄 Setting Argo CD NodePort to $ARGOCD_NODEPORT..."
+    kubectl patch svc argocd-server -n argocd -p "{\"spec\": {\"type\": \"NodePort\", \"ports\": [{\"port\": 443, \"targetPort\": 8080, \"nodePort\": $ARGOCD_NODEPORT}]}}"
+    
+    echo "✅ Argo CD installed! Access it at: http://$NODE_HOSTNAME:$ARGOCD_NODEPORT"
 }
 
 # Function to install Argo CD CLI
@@ -90,55 +98,6 @@ function install_k9s() {
     echo "✅ k9s installed!"
 }
 
-# Function to install Docker Registry (Using Traefik)
-function install_docker_registry() {
-    echo "📦 Installing Lightweight Docker Registry with Traefik..."
-
-    kubectl create namespace registry || true
-
-    # Deploy Docker Registry
-    kubectl apply -n registry -f - <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: docker-registry
-  namespace: registry
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: docker-registry
-  template:
-    metadata:
-      labels:
-        app: docker-registry
-    spec:
-      containers:
-      - name: registry
-        image: registry:2
-        ports:
-        - containerPort: 5000
-EOF
-
-    # Service for internal communication
-    kubectl apply -n registry -f - <<EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: docker-registry
-  namespace: registry
-spec:
-  ports:
-    - name: http
-      port: 5000
-      targetPort: 5000
-  selector:
-    app: docker-registry
-EOF
-
-    echo "✅ Docker Registry installed with Traefik!"
-}
-
 # Function to install Prometheus, Grafana, and Loki (Using Traefik)
 function install_monitoring_stack() {
     echo "📦 Installing Prometheus, Grafana, and Loki (Traefik enabled)..."
@@ -153,28 +112,7 @@ function install_monitoring_stack() {
     # Install Loki
     helm install loki grafana/loki-stack --namespace monitoring --set promtail.enabled=true
 
-    # Deploy Grafana with Traefik IngressRoute
-    kubectl apply -n monitoring -f - <<EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: grafana-ingress
-  namespace: monitoring
-spec:
-  rules:
-  - host: grafana.local
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: prometheus-grafana
-            port:
-              number: 80
-EOF
-
-    echo "✅ Prometheus, Grafana, and Loki installed using Traefik!"
+    echo "✅ Prometheus, Grafana, and Loki installed!"
 }
 
 ### **🚀 Run Installation Steps**
@@ -185,7 +123,16 @@ install_kubernetes_dashboard
 install_argocd
 install_argocd_cli
 install_k9s
-install_docker_registry
 install_monitoring_stack
 
 echo "🎉 Installation complete! 🚀"
+
+echo "🌍 **Access Your Services Here:**"
+echo "🔹 **Argo CD**:      http://$NODE_HOSTNAME:$ARGOCD_NODEPORT"
+echo "🔹 **Grafana**:      http://grafana.local (set up via Traefik)"
+echo "🔹 **Prometheus**:   Accessible via Grafana"
+echo "🔹 **Loki (Logs)**:  Integrated with Grafana"
+
+echo "✅ **Login to Argo CD**"
+echo "   Username: admin"
+echo "   Password: (Use: kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)"
