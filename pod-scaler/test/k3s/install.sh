@@ -50,9 +50,21 @@ function install_k3s() {
 # Function to install kubectl
 function install_kubectl() {
     echo "📦 Installing kubectl..."
-    curl -LO "https://dl.k8s.io/release/$(curl -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+
+    # Fetch latest version, fallback to a known working version if empty
+    KUBECTL_VERSION=$(curl -s https://dl.k8s.io/release/stable.txt || echo "v1.28.0")
+
+    if [[ -z "$KUBECTL_VERSION" ]]; then
+        echo "⚠️ Failed to fetch latest kubectl version, using fallback version v1.28.0"
+        KUBECTL_VERSION="v1.28.0"
+    fi
+
+    echo "🔄 Downloading kubectl version: $KUBECTL_VERSION"
+    curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
+
     chmod +x kubectl
     sudo mv kubectl /usr/local/bin/
+
     echo "✅ kubectl installed!"
 }
 
