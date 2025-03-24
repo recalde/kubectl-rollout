@@ -1,10 +1,16 @@
 #!/bin/bash
 # This script retrieves Kubernetes deployments from a given namespace (or default),
-# groups them by the label "app.kubernetes.io/instance" (each instance gets its own table),
-# and within each table, displays columns for each "app.kubernetes.io/name" value showing the replica counts.
+# groups them by the label "app.kubernetes.io/instance",
+# and prints an instance summary.
 #
-# Deployments missing a label are grouped under "unknown-instance" or "unknown-name".
-# Friendly logging with colored messages is provided throughout.
+# For each instance, the output is:
+#   Instance: <instance-label>
+#   Deployments: deployment1: <replicas>, deployment2: <replicas>, ...
+#   Total Replicas: <sum of replicas for that instance>
+#
+# Usage: ./instance_summary.sh [namespace]
+#
+# Requirements: kubectl must be configured and available in the PATH.
 
 # Color codes for logging.
 GREEN="\033[0;32m"
@@ -27,11 +33,10 @@ log_error() {
 }
 
 # Display banner header.
-echo "==============================================================="
-echo "  Kubernetes Deployment Replica Summary (Separate Tables)"
-echo "  Each table groups columns by app.kubernetes.io/name"
-echo "  for a given app.kubernetes.io/instance"
-echo "==============================================================="
+echo "====================================================="
+echo "  Kubernetes Deployment Instance Summary"
+echo "  (Grouped by app.kubernetes.io/instance)"
+echo "====================================================="
 echo ""
 
 # Check for an optional namespace argument.
@@ -45,90 +50,48 @@ else
 fi
 
 # Retrieve deployments.
-log_info "Retrieving deployments (name, instance label, name label, replicas)..."
-# Escape dots in label names.
-deployments=$(kubectl get deployments ${NAMESPACE_FLAG} -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.labels.app\.kubernetes\.io/instance}{" "}{.metadata.labels.app\.kubernetes\.io/name}{" "}{.spec.replicas}{"\n"}{end}')
+log_info "Retrieving deployments (name, instance, replicas)..."
+deployments=$(kubectl get deployments ${NAMESPACE_FLAG} -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.labels.app\.kubernetes\.io/instance}{" "}{.spec.replicas}{"\n"}{end}')
 
 if [ -z "$deployments" ]; then
     log_error "No deployments found. Exiting."
     exit 1
 fi
 
-# Declare associative arrays for our pivot data.
-declare -A cell_values   # Key format: "instance|name" holds the replica count.
-declare -A row_totals    # Totals per instance (row).
-
-# We'll also track all unique instance and name labels.
-declare -A instance_seen
-declare -A name_seen
+# Declare associative arrays.
+declare -A instance_deployments   # Will hold a concatenated string of "deployment: replica"
+declare -A instance_totals        # Will hold the total replica count per instance
 
 log_info "Processing deployments..."
-while IFS=' ' read -r deploy instance name replicas; do
+while IFS=' ' read -r deploy instance replicas; do
     # Skip empty lines.
     [ -z "$deploy" ] && continue
 
-    # Use default values if labels are missing.
+    # Use default if instance label is missing.
     if [[ -z "$instance" ]]; then
         instance="unknown-instance"
     fi
-    if [[ -z "$name" ]]; then
-        name="unknown-name"
-    fi
 
-    # Create a composite key for the pivot data.
-    key="${instance}|${name}"
-    cell_values["$key"]=$(( ${cell_values["$key"]:-0} + replicas ))
-    row_totals["$instance"]=$(( ${row_totals["$instance"]:-0} + replicas ))
-    instance_seen["$instance"]=1
-    name_seen["$name"]=1
-
-    log_info "Processed deployment '${YELLOW}$deploy${NC}' with ${YELLOW}$replicas${NC} replicas (instance: ${YELLOW}$instance${NC}, name: ${YELLOW}$name${NC})."
+    # Append the deployment detail (e.g., "webapp: 3") to the instance string.
+    instance_deployments["$instance"]+="${deploy}: ${replicas}, "
+    # Sum the total replicas for this instance.
+    instance_totals["$instance"]=$(( ${instance_totals["$instance"]:-0} + replicas ))
+    
+    log_info "Processed deployment '${YELLOW}$deploy${NC}' with ${YELLOW}$replicas${NC} replicas under instance '${YELLOW}$instance${NC}'."
 done <<< "$deployments"
 
-# Build arrays of unique instance and name labels.
-instances=()
-for inst in "${!instance_seen[@]}"; do
-    instances+=( "$inst" )
+# Display the summary for each instance.
+echo ""
+log_success "Instance Summary:"
+echo "-----------------------------------------------------"
+for instance in "${!instance_totals[@]}"; do
+    echo -e "${YELLOW}Instance: ${instance}${NC}"
+    # Remove trailing comma and space from the deployments string.
+    deployments_str="${instance_deployments[$instance]}"
+    deployments_str="${deployments_str%, }"
+    echo "Deployments: ${deployments_str}"
+    echo "Total Replicas: ${instance_totals[$instance]}"
+    echo "-----------------------------------------------------"
 done
 
-names=()
-for nm in "${!name_seen[@]}"; do
-    names+=( "$nm" )
-done
-
-# (Optional) Sort the arrays for consistent output.
-IFS=$'\n' instances=($(sort <<<"${instances[*]}"))
-IFS=$'\n' names=($(sort <<<"${names[*]}"))
-unset IFS
-
-# Define formatting widths.
-colWidth=15
-totalWidth=14
-
-# For each instance, print a separate table.
-for inst in "${instances[@]}"; do
-    echo ""
-    log_success "Pivot Table for Instance: ${YELLOW}$inst${NC}"
-    
-    # Print table header.
-    printf "-------------------------------------------------------------\n"
-    printf "|"
-    for nm in "${names[@]}"; do
-        printf " %-${colWidth}s |" "$nm"
-    done
-    printf " %-${totalWidth}s |\n" "Total"
-    printf "-------------------------------------------------------------\n"
-    
-    # Print table row for the instance.
-    printf "|"
-    row_total=0
-    for nm in "${names[@]}"; do
-        key="${inst}|${nm}"
-        value=${cell_values["$key"]:-0}
-        printf " %-${colWidth}d |" "$value"
-    done
-    printf " %-${totalWidth}d |\n" "${row_totals[$inst]}"
-    printf "-------------------------------------------------------------\n"
-done
-
-log_success "Summary tables complete."
+log_success "Summary complete."
