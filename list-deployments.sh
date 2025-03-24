@@ -1,6 +1,6 @@
 #!/bin/bash
 # This script retrieves Kubernetes deployments from a given namespace (or default),
-# groups them by the label "app.kubernetes.io/instance", and prints a summary.
+# groups them by the label "app.kubernetes.io/instance", and prints an instance summary.
 #
 # For each instance, the output includes:
 #   - A header with the instance name.
@@ -64,6 +64,11 @@ process_deployments() {
         # If the instance label is missing, use a default.
         if [[ -z "$instance" ]]; then
             instance="unknown-instance"
+        fi
+
+        # Ensure replicas is numeric; default to 0 if not.
+        if ! [[ "$replicas" =~ ^[0-9]+$ ]]; then
+            replicas=0
         fi
 
         # Append deployment info (e.g., "webapp: 3") to the instance summary.
