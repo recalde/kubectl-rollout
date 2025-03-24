@@ -13,3 +13,15 @@ and "500Mi" becomes "500".
   {{- $mem | int -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+This helper template replaces the placeholder "{javaMemory}" in
+the dispatch.JavaOptions string with the computed Java memory in Mi.
+It uses the previously defined "mychart.javaMemory" helper.
+*/}}
+{{- define "mychart.dispatchJavaOptions" -}}
+  {{- $javaMemory := include "mychart.javaMemory" . -}}
+  {{- $javaOptions := .Values.dispatch.JavaOptions | default "" -}}
+  {{- $final := replace "{javaMemory}" $javaMemory $javaOptions -}}
+  {{- $final -}}
+{{- end -}}
